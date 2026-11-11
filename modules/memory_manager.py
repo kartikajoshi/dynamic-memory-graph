@@ -13,6 +13,10 @@ Supported operations:
 Entity alias resolution maps common nicknames and short forms to a canonical
 entity name so "Bangalore" and "Bengaluru" are treated as the same node.
 
+Nov 9 update: added edge deduplication - before adding a new edge, checks for
+near-duplicate facts (same subject, similar predicate, similar object) and
+merges them instead of creating parallel edges.
+
 Usage (from the project root):
     from modules.memory_manager import update_graph
     actions = update_graph(store, triples, "2026-10-29T10:00:00")
@@ -54,13 +58,28 @@ ENTITY_ALIASES = {
     "bro": "Brother",
 }
 
+# Predicate synonyms for deduplication.
+PREDICATE_SYNONYMS = {
+    "has": {"has", "have", "suffering_from", "diagnosed_with"},
+    "takes": {"takes", "take", "taking", "uses", "using", "on"},
+    "lives_in": {"lives_in", "live_in", "living_in", "resides_in", "based_in", "located_in"},
+    "likes": {"likes", "like", "loves", "love", "enjoys", "enjoy", "prefers", "prefer"},
+    "works_at": {"works_at", "work_at", "working_at", "employed_at", "employed_by"},
+    "allergic_to": {"allergic_to", "allergy_to"},
+}
+
+# Build reverse lookup: predicate -> canonical form.
+_PREDICATE_CANONICAL = {}
+for canonical, synonyms in PREDICATE_SYNONYMS.items():
+    for syn in synonyms:
+        _PREDICATE_CANONICAL[syn] = canonical
+
 
 def normalize_entity(name):
     """Clean an entity name: trim, resolve aliases, map self-references to USER_NODE."""
     cleaned = " ".join(str(name).split()).strip(" .,!?;:'\"")
     if cleaned.lower() in SELF_WORDS:
         return USER_NODE
-    # Check the alias dictionary for a canonical form.
     canonical = ENTITY_ALIASES.get(cleaned.lower())
     if canonical:
         return canonical
@@ -73,14 +92,41 @@ def normalize_predicate(predicate):
     return re.sub(r"[^a-z0-9_]", "", cleaned).strip("_")
 
 
+def _canonical_predicate(predicate):
+    """Return the canonical form of a predicate for dedup matching."""
+    return _PREDICATE_CANONICAL.get(predicate, predicate)
+
+
 def is_duplicate(graph_store, subject, predicate, obj):
     """Return True if this exact fact is already active in the graph."""
     return graph_store.has_edge(subject, predicate, obj, active_only=True)
 
 
+def _is_near_duplicate(graph_store, subject, predicate, obj):
+    """Check for near-duplicate: same subject, synonym predicate, same object."""
+    canonical = _canonical_predicate(predicate)
+    synonyms = PREDICATE_SYNONYMS.get(canonical, {predicate})
+
+    for syn in synonyms:
+        if graph_store.has_edge(subject, syn, obj, active_only=True):
+            return True
+    return False
+
+
 def _find_existing(graph_store, subject, predicate):
     """Find active edges with the same subject and predicate (to detect updates)."""
     return graph_store.find_edges(subject=subject, predicate=predicate, active_only=True)
+
+
+def _find_existing_canonical(graph_store, subject, predicate):
+    """Find active edges with the same subject and any synonym predicate."""
+    canonical = _canonical_predicate(predicate)
+    synonyms = PREDICATE_SYNONYMS.get(canonical, {predicate})
+
+    results = []
+    for syn in synonyms:
+        results.extend(graph_store.find_edges(subject=subject, predicate=syn, active_only=True))
+    return results
 
 
 def _end_edge(graph_store, edge_fact, timestamp):
@@ -140,7 +186,6 @@ def update_graph(graph_store, triples, timestamp):
                     actions.append({"op": "DELETE", "subject": subject,
                                     "predicate": positive, "object": obj})
                     continue
-            # Nothing to delete - just skip
             actions.append({"op": "SKIP", "subject": subject,
                             "predicate": predicate, "object": obj})
             continue
@@ -151,8 +196,14 @@ def update_graph(graph_store, triples, timestamp):
                             "predicate": predicate, "object": obj})
             continue
 
-        # --- UPDATE: same (subject, predicate) but different object ---
-        existing = _find_existing(graph_store, subject, predicate)
+        # --- SKIP: near-duplicate (synonym predicate, same object) ---
+        if _is_near_duplicate(graph_store, subject, predicate, obj):
+            actions.append({"op": "SKIP", "subject": subject,
+                            "predicate": predicate, "object": obj})
+            continue
+
+        # --- UPDATE: same (subject, predicate-group) but different object ---
+        existing = _find_existing_canonical(graph_store, subject, predicate)
         if existing:
             for edge_fact in existing:
                 _end_edge(graph_store, edge_fact, timestamp)
@@ -179,7 +230,7 @@ if __name__ == "__main__":
 
     store = GraphStore(os.path.join(tempfile.gettempdir(), "dmg_test_memory.json"))
 
-    # First round: basic adds
+    # Round 1: basic adds
     round1 = [
         {"subject": "I", "predicate": "has", "object": "Diabetes", "object_type": "CONDITION"},
         {"subject": "User", "predicate": "takes", "object": "Metformin", "object_type": "DRUG"},
@@ -189,13 +240,14 @@ if __name__ == "__main__":
     for action in update_graph(store, round1, "2026-10-29T10:00:00"):
         print(action)
 
-    # Second round: duplicate, update, delete
+    # Round 2: duplicate, near-duplicate, update, delete
     round2 = [
         {"subject": "User", "predicate": "has", "object": "Diabetes", "object_type": "CONDITION"},
+        {"subject": "User", "predicate": "taking", "object": "Metformin", "object_type": "DRUG"},
         {"subject": "User", "predicate": "lives_in", "object": "Mumbai", "object_type": "PLACE"},
         {"subject": "User", "predicate": "stopped_taking", "object": "Metformin", "object_type": "DRUG"},
     ]
-    print("\n--- Round 2 (SKIP / UPDATE / DELETE) ---")
+    print("\n--- Round 2 (SKIP / SKIP-near-dup / UPDATE / DELETE) ---")
     for action in update_graph(store, round2, "2026-10-29T11:00:00"):
         print(action)
 
