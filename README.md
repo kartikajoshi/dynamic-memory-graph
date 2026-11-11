@@ -20,7 +20,7 @@ User message
 2. Extractor         →  pulls (subject, predicate, object, object_type) triples
     │
     ▼
-3. Memory Manager    →  ADD / UPDATE / DELETE facts, links entity aliases, tracks time
+3. Memory Manager    →  ADD / UPDATE / DELETE facts, links entity aliases, deduplicates edges
     │
     ▼
 4. Graph Store       →  NetworkX graph, saved to data/graph.json
@@ -66,23 +66,24 @@ dynamic-memory-graph/
 ├── README.md
 ├── requirements.txt
 ├── config.py                   # shared settings for all modules
-├── problem_demo.py             # baseline: Llama failing without memory
-├── main.py                     # integration pipeline
+├── problem_demo.py             # baseline vs DMG comparison demo
+├── main.py                     # integration pipeline + CLI chat
 ├── app.py                      # Streamlit chat UI
 │
 ├── modules/
-│   ├── query_rewriter.py       # coreference resolution
-│   ├── extractor.py            # entity + triple extraction
-│   ├── memory_manager.py       # ADD / UPDATE / DELETE, entity linking
-│   ├── graph_store.py          # NetworkX backend, multi-hop expansion, reranking
-│   └── retriever.py            # BM25 + RRF hybrid retrieval
+│   ├── query_rewriter.py       # coreference resolution (Abhishek)
+│   ├── extractor.py            # entity + triple extraction (Arnav)
+│   ├── memory_manager.py       # ADD / UPDATE / DELETE, alias + dedup (Aditya)
+│   ├── graph_store.py          # NetworkX backend, expand, rerank (Arpit)
+│   ├── retriever.py            # BM25 + FAISS + graph → RRF fusion (Kartika)
+│   └── graph_viz.py            # graph visualization helper (Arpit)
 │
 ├── evaluation/
-│   ├── eval.py                 # Recall@k + ablation study
-│   └── test_conversations.json
+│   ├── eval.py                 # Recall@k + ablation study (Kartika)
+│   └── test_conversations.json # test data for evaluation
 │
 ├── data/                       # graph.json is created here at runtime
-└── screenshots/
+└── screenshots/                # graph visualizations and UI screenshots
 ```
 
 ---
@@ -100,7 +101,7 @@ ollama pull llama3.2:3b
 **2. Clone the repo and install dependencies**
 
 ```bash
-git clone https://github.com/<your-username>/dynamic-memory-graph.git
+git clone https://github.com/kartikajoshi/dynamic-memory-graph.git
 cd dynamic-memory-graph
 python -m venv venv
 ```
@@ -118,11 +119,43 @@ pip install -r requirements.txt
 
 **3. Run**
 
+Terminal chat:
+```bash
+python main.py
+```
+
+Streamlit UI:
 ```bash
 streamlit run app.py
 ```
 
-> The UI and pipeline are under development. Run instructions will be updated as modules land.
+Problem demonstration (baseline vs DMG):
+```bash
+python problem_demo.py
+```
+
+Evaluation:
+```bash
+python -m evaluation.eval
+python -m evaluation.eval --skip-llm   # quick check without Ollama
+```
+
+Graph visualization:
+```bash
+python -m modules.graph_viz
+```
+
+---
+
+## Screenshots
+
+> Screenshots will be added after the full pipeline is tested end-to-end.
+
+| Screenshot | Description |
+|---|---|
+| `screenshots/graph.png` | Memory graph after a sample conversation |
+| (Streamlit UI) | Chat interface with pipeline details sidebar |
+| (Problem demo) | Side-by-side baseline vs DMG output |
 
 ---
 
@@ -133,7 +166,7 @@ streamlit run app.py
 | Abhishek | Query rewriter (`modules/query_rewriter.py`) |
 | Arnav | Entity and triple extractor (`modules/extractor.py`) |
 | Aditya | Memory manager (`modules/memory_manager.py`) |
-| Arpit | Graph store and reranker (`modules/graph_store.py`) |
+| Arpit | Graph store, reranker, visualization (`modules/graph_store.py`, `modules/graph_viz.py`) |
 | Kartika | Retriever, evaluation, integration, UI, config, docs |
 
 ---
@@ -141,11 +174,14 @@ streamlit run app.py
 ## Status
 
 - [x] Project structure and dependencies
-- [ ] Extractor
-- [ ] Graph store
-- [ ] Memory manager
-- [ ] Query rewriter
-- [ ] Retriever (BM25 → RRF fusion)
-- [ ] Integration pipeline
-- [ ] Evaluation (Recall@k, ablation)
-- [ ] Streamlit UI
+- [x] Query rewriter (coreference resolution + graceful fallback)
+- [x] Extractor (few-shot extraction + retries + type fixing)
+- [x] Memory manager (ADD / UPDATE / DELETE + aliases + edge dedup)
+- [x] Graph store (NetworkX + multi-hop expansion + recency rerank)
+- [x] Retriever (BM25 → RRF fusion with dense + graph)
+- [x] Integration pipeline (main.py CLI)
+- [x] Problem demonstration (baseline vs DMG)
+- [x] Evaluation (Recall@k + ablation)
+- [x] Streamlit UI
+- [x] Graph visualization
+- [ ] Final README with architecture diagram and screenshots
