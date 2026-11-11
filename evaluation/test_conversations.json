@@ -1,0 +1,58 @@
+[
+  {
+    "id": "conv1_medical",
+    "description": "Medical facts: conditions, drugs, allergies",
+    "turns": [
+      {"message": "I have diabetes and take Metformin twice a day.", "expected_triples": ["User has Diabetes", "User takes Metformin"]},
+      {"message": "I'm also allergic to penicillin.", "expected_triples": ["User allergic_to Penicillin"]},
+      {"message": "My doctor prescribed Insulin last week.", "expected_triples": ["User takes Insulin"]},
+      {"message": "What medicines do I take?", "expected_facts": ["User takes Metformin", "User takes Insulin"], "query": true},
+      {"message": "Do I have any allergies?", "expected_facts": ["User allergic_to Penicillin"], "query": true}
+    ]
+  },
+  {
+    "id": "conv2_personal",
+    "description": "Personal facts: family, locations, preferences",
+    "turns": [
+      {"message": "I live in Bangalore and work at Infosys.", "expected_triples": ["User lives_in Bangalore", "User works_at Infosys"]},
+      {"message": "My sister Priya lives in Pune.", "expected_triples": ["User has_sister Priya", "Priya lives_in Pune"]},
+      {"message": "I love filter coffee and hate spicy food.", "expected_triples": ["User likes Filter Coffee", "User dislikes Spicy Food"]},
+      {"message": "Where do I live?", "expected_facts": ["User lives_in Bangalore"], "query": true},
+      {"message": "Where does my sister live?", "expected_facts": ["Priya lives_in Pune"], "query": true},
+      {"message": "What do I like?", "expected_facts": ["User likes Filter Coffee"], "query": true}
+    ]
+  },
+  {
+    "id": "conv3_updates",
+    "description": "Fact updates: user changes location and stops a drug",
+    "turns": [
+      {"message": "I live in Delhi and take Aspirin.", "expected_triples": ["User lives_in Delhi", "User takes Aspirin"]},
+      {"message": "I moved to Mumbai last month.", "expected_triples": ["User lives_in Mumbai"]},
+      {"message": "I stopped taking Aspirin.", "expected_triples": ["User stopped_taking Aspirin"]},
+      {"message": "Where do I live now?", "expected_facts": ["User lives_in Mumbai"], "query": true},
+      {"message": "What medicines do I take?", "expected_facts": [], "query": true}
+    ]
+  },
+  {
+    "id": "conv4_multi_hop",
+    "description": "Multi-hop: facts connected through intermediate entities",
+    "turns": [
+      {"message": "My friend Raj is a cardiologist.", "expected_triples": ["User has_friend Raj", "Raj is Cardiologist"]},
+      {"message": "Raj works at Apollo Hospital in Chennai.", "expected_triples": ["Raj works_at Apollo Hospital", "Apollo Hospital located_in Chennai"]},
+      {"message": "I have high blood pressure.", "expected_triples": ["User has High Blood Pressure"]},
+      {"message": "Which hospital does my friend work at?", "expected_facts": ["Raj works_at Apollo Hospital"], "query": true},
+      {"message": "Do I have any conditions?", "expected_facts": ["User has High Blood Pressure"], "query": true}
+    ]
+  },
+  {
+    "id": "conv5_noise",
+    "description": "Noise resistance: general questions mixed with facts",
+    "turns": [
+      {"message": "I enjoy hiking on weekends.", "expected_triples": ["User likes Hiking"]},
+      {"message": "What is the capital of France?", "expected_triples": []},
+      {"message": "How does photosynthesis work?", "expected_triples": []},
+      {"message": "I also love reading science fiction.", "expected_triples": ["User likes Science Fiction"]},
+      {"message": "What are my hobbies?", "expected_facts": ["User likes Hiking", "User likes Science Fiction"], "query": true}
+    ]
+  }
+]
