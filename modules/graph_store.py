@@ -5,8 +5,8 @@ NetworkX-backed storage for the memory graph. Entities are nodes and facts
 are directed edges (subject -> object) labelled with a predicate. The graph
 is saved to data/graph.json with networkx node_link_data / node_link_graph.
 
-This version covers the basics: add nodes/edges, look up facts, save, load.
-expand() (multi-hop walks) and rerank() (recency) are added on Oct 31.
+Oct 31 update: added expand() for multi-hop graph walks and rerank() for
+recency-based re-ranking of retrieved facts.
 
 Usage (from the project root):
     from modules.graph_store import GraphStore
@@ -14,17 +14,24 @@ Usage (from the project root):
     store.add_edge("User", "takes", "Metformin", obj_type="DRUG", created_at="2026-10-28T10:00:00")
     store.save()
 
+    # Multi-hop expansion from a set of entities
+    expanded = store.expand({"user", "metformin"}, max_hops=2)
+
+    # Recency rerank
+    ranked = store.rerank(expanded)
+
 Quick test:
     python -m modules.graph_store
 """
 
 import json
 import os
+from datetime import datetime
 
 import networkx as nx
 from networkx.readwrite import json_graph
 
-from config import GRAPH_PATH, USER_NODE
+from config import GRAPH_PATH, GRAPH_TOP_K, MAX_HOPS, USER_NODE
 
 
 def _key(name):
@@ -140,6 +147,66 @@ class GraphStore:
             "key": k,
         }
 
+    # ---------- Multi-hop expansion ----------
+
+    def expand(self, seed_entities, max_hops=MAX_HOPS, active_only=True):
+        """Walk up to max_hops from seed entities and return all reachable active facts.
+
+        seed_entities: a set of entity names (strings) to start from.
+        Returns a list of fact dicts (same format as get_all_facts).
+        Deduplicates by (source, target, key).
+        """
+        frontier = set()
+        for entity in seed_entities:
+            key = _key(entity)
+            if key in self.graph:
+                frontier.add(key)
+
+        if not frontier:
+            return []
+
+        visited_nodes = set(frontier)
+        collected = {}
+
+        for _hop in range(max_hops):
+            next_frontier = set()
+            for node in frontier:
+                for u, v, k, data in self.graph.out_edges(node, keys=True, data=True):
+                    if active_only and data.get("ended_at"):
+                        continue
+                    fact_key = (u, v, k)
+                    if fact_key not in collected:
+                        collected[fact_key] = self._edge_to_fact(u, v, k, data)
+                    if v not in visited_nodes:
+                        next_frontier.add(v)
+
+                for u, v, k, data in self.graph.in_edges(node, keys=True, data=True):
+                    if active_only and data.get("ended_at"):
+                        continue
+                    fact_key = (u, v, k)
+                    if fact_key not in collected:
+                        collected[fact_key] = self._edge_to_fact(u, v, k, data)
+                    if u not in visited_nodes:
+                        next_frontier.add(u)
+
+            visited_nodes |= next_frontier
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        return list(collected.values())
+
+    # ---------- Recency-based reranking ----------
+
+    def rerank(self, facts, top_k=GRAPH_TOP_K):
+        """Rerank facts by recency (newest created_at first) and return the top_k."""
+        def _sort_key(fact):
+            ts = fact.get("created_at")
+            return ts if ts else ""
+
+        sorted_facts = sorted(facts, key=_sort_key, reverse=True)
+        return sorted_facts[:top_k]
+
     # ---------- Housekeeping ----------
 
     def stats(self):
@@ -173,12 +240,31 @@ if __name__ == "__main__":
 
     test_path = os.path.join(tempfile.gettempdir(), "dmg_test_graph.json")
     store = GraphStore(test_path)
+
     store.add_edge("User", "has", "Diabetes", obj_type="CONDITION", created_at="2026-10-23T10:00:00")
-    store.add_edge("User", "takes", "Metformin", obj_type="DRUG", created_at="2026-10-23T10:00:00")
+    store.add_edge("User", "takes", "Metformin", obj_type="DRUG", created_at="2026-10-24T09:00:00")
+    store.add_edge("User", "lives_in", "Bangalore", obj_type="PLACE", created_at="2026-10-25T08:00:00")
+    store.add_edge("User", "has_sister", "Priya", obj_type="PERSON", created_at="2026-10-25T08:00:00")
+    store.add_edge("Priya", "lives_in", "Pune", obj_type="PLACE", created_at="2026-10-25T08:05:00")
     store.save()
 
     reloaded = GraphStore(test_path).load()
     print("Stats:", reloaded.stats())
+    print("\nAll facts:")
     for fact in reloaded.get_all_facts():
         print("   ", fact["text"])
-    print("Has 'User takes Metformin':", reloaded.has_edge("user", "takes", "metformin"))
+
+    print("\n--- expand() from {'User'}, max_hops=1 ---")
+    hop1 = reloaded.expand({"User"}, max_hops=1)
+    for fact in hop1:
+        print("   ", fact["text"])
+
+    print("\n--- expand() from {'User'}, max_hops=2 ---")
+    hop2 = reloaded.expand({"User"}, max_hops=2)
+    for fact in hop2:
+        print("   ", fact["text"])
+
+    print("\n--- rerank() top 3 ---")
+    ranked = reloaded.rerank(hop2, top_k=3)
+    for fact in ranked:
+        print(f"    {fact['created_at']}  {fact['text']}")
