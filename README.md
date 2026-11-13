@@ -8,40 +8,102 @@ Small models like **Llama 3.2 3B** have a short context window (2048 tokens), so
 
 ---
 
-## How it works
+## Architecture
 
 ```
-User message
-    │
-    ▼
-1. Query Rewriter    →  resolves pronouns ("its side effects" → "Metformin side effects")
-    │
-    ▼
-2. Extractor         →  pulls (subject, predicate, object, object_type) triples
-    │
-    ▼
-3. Memory Manager    →  ADD / UPDATE / DELETE facts, links entity aliases, deduplicates edges
-    │
-    ▼
-4. Graph Store       →  NetworkX graph, saved to data/graph.json
-    │
-    ▼
-5. Retriever         →  BM25 + dense search + graph expansion, fused with RRF
-    │
-    ▼
-6. LLM (Ollama)      →  answers using only the retrieved facts
+┌─────────────────────────────────────────────────────────┐
+│                    User Message                         │
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│  1. Query Rewriter (Abhishek)                           │
+│     • Detects pronouns and vague references             │
+│     • Calls Llama 3.2 3B to resolve coreferences        │
+│     • Graceful fallback: returns original if no refs     │
+│     Input:  "What are its side effects?"                │
+│     Output: "What are the side effects of Metformin?"   │
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│  2. Entity & Triple Extractor (Arnav)                   │
+│     • Few-shot prompted JSON extraction via Ollama      │
+│     • Validates object_type ∈ {PERSON, CONDITION,       │
+│       DRUG, PLACE, PREFERENCE}                          │
+│     • Auto-fixes type variants (MEDICINE→DRUG)          │
+│     • Retry on LLM failure, logging throughout          │
+│     Output: [{"subject":"User", "predicate":"takes",    │
+│               "object":"Metformin", "object_type":"DRUG"}]
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│  3. Memory Manager (Aditya)                             │
+│     • ADD: new fact → edge with created_at              │
+│     • SKIP: exact or near-duplicate detected            │
+│     • UPDATE: same (subject, predicate) → end old edge, │
+│       add new one                                       │
+│     • DELETE: negation predicate → end matching edge     │
+│     • Entity aliases: Bengaluru→Bangalore, Mom→Mother   │
+│     • Predicate synonyms: takes≈using≈on                │
+│     • Edge deduplication across synonym groups           │
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│  4. Graph Store (Arpit)                                 │
+│     • NetworkX MultiDiGraph                             │
+│     • Nodes = entities (typed: PERSON, DRUG, etc.)      │
+│     • Edges = facts (predicate, created_at, ended_at)   │
+│     • Persistence: JSON via node_link_data              │
+│     • expand(): multi-hop walks (in + out edges)        │
+│     • rerank(): recency-based sorting                   │
+│     • graph_viz: matplotlib visualization               │
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│  5. Hybrid Retriever (Kartika)                          │
+│     ┌───────────┐  ┌────────────┐  ┌────────────────┐  │
+│     │ BM25      │  │ Dense      │  │ Graph          │  │
+│     │ (rank-bm25│  │ (FAISS +   │  │ (expand from   │  │
+│     │  keyword) │  │  MiniLM)   │  │  query entities│  │
+│     └─────┬─────┘  └─────┬──────┘  └──────┬─────────┘  │
+│           │              │                 │            │
+│           └──────────────┼─────────────────┘            │
+│                          ▼                              │
+│              Reciprocal Rank Fusion (k=60)              │
+│                          │                              │
+│                     top-5 facts                         │
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│  6. Answer Generation                                   │
+│     • System prompt with retrieved facts                │
+│     • Llama 3.2 3B generates the answer                 │
+│     • Facts are injected, not the full chat history     │
+└─────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## How it works
 
 **Entity types:** `PERSON`, `CONDITION`, `DRUG`, `PLACE`, `PREFERENCE`
 
-**Example:**
+**Example conversation:**
 
-| User says | Stored triple |
-|---|---|
-| "I'm diabetic and take Metformin" | `(User, has, Diabetes, CONDITION)` |
-| | `(User, takes, Metformin, DRUG)` |
-
-Twenty turns later, "What are its side effects?" is rewritten to "What are the side effects of Metformin?", and the stored facts are retrieved and passed to the model.
+| Turn | User says | Pipeline action |
+|------|-----------|-----------------|
+| 1 | "I'm diabetic and take Metformin" | ADD: (User, has, Diabetes), (User, takes, Metformin) |
+| 2 | "I live in Bangalore" | ADD: (User, lives_in, Bangalore) |
+| 3 | "My sister Priya lives in Pune" | ADD: (User, has_sister, Priya), (Priya, lives_in, Pune) |
+| ... | *(several unrelated turns)* | |
+| 10 | "What medicine do I take?" | Retrieve: "User takes Metformin" → answers correctly |
+| 11 | "I moved to Mumbai" | UPDATE: end "lives_in Bangalore", add "lives_in Mumbai" |
+| 12 | "I stopped taking Metformin" | DELETE: end "takes Metformin" |
 
 ---
 
@@ -52,10 +114,12 @@ Twenty turns later, "What are its side effects?" is rewritten to "What are the s
 | Language | Python 3.10+ |
 | LLM | Ollama, `llama3.2:3b` (runs locally) |
 | Graph + persistence | NetworkX (JSON via `node_link_data`) |
-| Keyword retrieval | rank-bm25 |
-| Embeddings | sentence-transformers (`all-MiniLM-L6-v2`) |
-| Vector search | FAISS |
+| Keyword retrieval | rank-bm25 (`BM25Plus`) |
+| Embeddings | sentence-transformers (`all-MiniLM-L6-v2`, 384-dim) |
+| Vector search | FAISS (`IndexFlatIP`, cosine similarity) |
+| Retrieval fusion | Reciprocal Rank Fusion (RRF, k=60) |
 | UI | Streamlit |
+| Visualization | matplotlib + NetworkX drawing |
 
 ---
 
@@ -147,15 +211,30 @@ python -m modules.graph_viz
 
 ---
 
+## Evaluation
+
+The evaluation framework (`evaluation/eval.py`) measures retrieval quality using **Recall@k** across 5 test conversations covering:
+
+1. Medical facts (conditions, drugs, allergies)
+2. Personal facts (family, locations, preferences)
+3. Fact updates (moves, stopping medication)
+4. Multi-hop queries (facts connected through intermediate entities)
+5. Noise resistance (general questions mixed with facts)
+
+**Ablation study** compares four retrieval strategies:
+
+| Retriever | What it uses |
+|---|---|
+| BM25 only | Keyword matching (rank-bm25) |
+| Dense only | Semantic similarity (FAISS + MiniLM) |
+| Graph only | Multi-hop expansion + recency rerank |
+| Full RRF | All three fused with Reciprocal Rank Fusion |
+
+---
+
 ## Screenshots
 
-> Screenshots will be added after the full pipeline is tested end-to-end.
-
-| Screenshot | Description |
-|---|---|
-| `screenshots/graph.png` | Memory graph after a sample conversation |
-| (Streamlit UI) | Chat interface with pipeline details sidebar |
-| (Problem demo) | Side-by-side baseline vs DMG output |
+> Screenshots will be added after end-to-end testing.
 
 ---
 
@@ -181,7 +260,7 @@ python -m modules.graph_viz
 - [x] Retriever (BM25 → RRF fusion with dense + graph)
 - [x] Integration pipeline (main.py CLI)
 - [x] Problem demonstration (baseline vs DMG)
-- [x] Evaluation (Recall@k + ablation)
+- [x] Evaluation framework (Recall@k + ablation)
 - [x] Streamlit UI
 - [x] Graph visualization
-- [ ] Final README with architecture diagram and screenshots
+- [x] Final README with architecture diagram
