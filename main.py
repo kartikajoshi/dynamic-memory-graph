@@ -75,6 +75,7 @@ class DMGPipeline:
                 model=MODEL_NAME,
                 messages=self.build_messages(query, facts),
                 options={"temperature": ANSWER_TEMPERATURE, "num_ctx": CONTEXT_WINDOW},
+                keep_alive="15m",   # keep the model warm in RAM between turns
             )
             return response["message"]["content"].strip()
         except Exception as error:
