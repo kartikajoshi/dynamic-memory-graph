@@ -1,0 +1,170 @@
+{
+  "description": "Held-out 17-turn script: nothing here (people, drugs, places, phrasings) appears in demo_script.json or the extractor's few-shot examples, so it tests generalisation rather than tuning. Same schema/semantics as demo_script.json. Turns without expect/forbid are judged by eye (statements, or answers with several acceptable wordings).",
+  "turns": [
+    {
+      "message": "Hey, I'm a 3rd year student at BITS Pilani and I live in Goa."
+    },
+    {
+      "message": "I was diagnosed with hypothyroidism, so I take Thyroxine every morning before breakfast."
+    },
+    {
+      "message": "My best friend Aditi lives in Chennai and works at Zomato."
+    },
+    {
+      "message": "She is a huge fan of Taylor Swift."
+    },
+    {
+      "message": "I'm lactose intolerant, so I avoid milk."
+    },
+    {
+      "message": "I drink black coffee every day and I love playing chess."
+    },
+    {
+      "message": "Explain photosynthesis in one sentence.",
+      "expect": [
+        "light"
+      ],
+      "forbid": [
+        "don't have any information",
+        "do not have any information"
+      ]
+    },
+    {
+      "message": "Which city does my best friend live in?",
+      "expect": [
+        "chennai"
+      ]
+    },
+    {
+      "message": "Where does she work?",
+      "expect": [
+        "zomato"
+      ]
+    },
+    {
+      "message": "What medicine am I on?",
+      "expect": [
+        "thyroxine"
+      ]
+    },
+    {
+      "message": "Should I take it with my morning coffee?",
+      "expect": [
+        "thyroxine"
+      ],
+      "forbid": [
+        "you can take",
+        "it's fine to take",
+        "it is fine to take",
+        "safe to take",
+        "consider taking",
+        "before your morning coffee"
+      ]
+    },
+    {
+      "message": "I quit coffee last week, I only drink green tea now.",
+      "forbid": [
+        "you can take",
+        "you can still take",
+        "interaction"
+      ]
+    },
+    {
+      "message": "I also moved from Goa to Hyderabad for an internship."
+    },
+    {
+      "message": "What do I drink these days?",
+      "expect": [
+        "green tea"
+      ]
+    },
+    {
+      "message": "Where do I live now?",
+      "expect": [
+        "hyderabad"
+      ]
+    },
+    {
+      "message": "What foods should I avoid?"
+    },
+    {
+      "message": "Tell me about myself in two lines.",
+      "expect": [
+        "hyderabad"
+      ],
+      "forbid": [
+        "taylor"
+      ]
+    }
+  ],
+  "final_active": [
+    [
+      "user",
+      "bits pilani"
+    ],
+    [
+      "user",
+      "hypothyroidism"
+    ],
+    [
+      "user",
+      "thyroxine"
+    ],
+    [
+      "user",
+      "aditi"
+    ],
+    [
+      "aditi",
+      "chennai"
+    ],
+    [
+      "aditi",
+      "zomato"
+    ],
+    [
+      "aditi",
+      "taylor swift"
+    ],
+    [
+      "user",
+      "chess"
+    ],
+    [
+      "user",
+      "green tea"
+    ],
+    [
+      "user",
+      "hyderabad"
+    ],
+    [
+      "user",
+      "lactose"
+    ]
+  ],
+  "final_retired": [
+    [
+      "user",
+      "goa"
+    ],
+    [
+      "user",
+      "coffee"
+    ]
+  ],
+  "final_absent": [
+    [
+      "user",
+      "taylor swift"
+    ],
+    [
+      "user",
+      "zomato"
+    ],
+    [
+      "user",
+      "chennai"
+    ]
+  ]
+}

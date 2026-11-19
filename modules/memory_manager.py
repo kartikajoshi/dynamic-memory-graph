@@ -4,10 +4,11 @@ Memory manager (owner: Aditya).
 Decides what happens to each extracted triple before it goes into the graph.
 Supported operations:
     ADD    - a new fact is stored as an edge with created_at = timestamp
-    SKIP   - the exact same fact is already stored, so nothing is added
-    UPDATE - an existing fact about the same (subject, predicate) is superseded:
-             the old edge gets ended_at = timestamp, and the new one is added
-    DELETE - the user explicitly negates something (dislikes, stopped, no longer);
+    SKIP   - the same fact is already stored (or the triple is junk), nothing is added
+    UPDATE - a single-valued fact (lives_in, works_at, ...) gets a new object, or a
+             like flips to a dislike (or back): the old edge gets ended_at = timestamp,
+             and the new one is added
+    DELETE - the user negates something (stopped taking, no longer, quit, left);
              the matching old edge gets ended_at = timestamp, nothing new is added
 
 Entity alias resolution maps common nicknames and short forms to a canonical
@@ -16,6 +17,12 @@ entity name so "Bangalore" and "Bengaluru" are treated as the same node.
 Nov 9 update: added edge deduplication - before adding a new edge, checks for
 near-duplicate facts (same subject, similar predicate, similar object) and
 merges them instead of creating parallel edges.
+
+Nov 18 update: only single-valued predicates supersede (takes/has/likes now
+accumulate); predicates are stored in canonical form (moved_to -> lives_in);
+negations are matched by prefix/stem (stops_taking, no_longer_*, quit, ...)
+and are never stored as facts; dislikes are real facts that flip likes;
+pronoun and unnamed-role triples (she, doctor, someone) are skipped.
 
 Usage (from the project root):
     from modules.memory_manager import update_graph
@@ -32,15 +39,43 @@ from config import USER_NODE
 # Words that refer to the person chatting.
 SELF_WORDS = {"i", "me", "my", "myself", "mine", "user", "the user"}
 
-# Predicates that signal the user is negating / removing a fact.
-NEGATION_PREDICATES = {
-    "does_not_have", "doesnt_have", "dont_have", "do_not_have",
-    "stopped", "stopped_taking", "quit", "no_longer_has",
-    "no_longer_takes", "no_longer_lives_in", "left", "moved_from",
-    "dislikes", "hates", "allergic_to_not", "not",
-    "does_not_like", "doesnt_like", "dont_like", "do_not_like",
-    "is_not", "isnt", "stopped_using", "gave_up",
+# A predicate starting with one of these negates the rest: "stops_taking" -> takes.
+NEGATION_PREFIXES = (
+    "no_longer_", "not_", "never_", "doesnt_", "dont_", "does_not_", "do_not_",
+    "didnt_", "did_not_", "isnt_", "is_not_", "is_no_longer_",
+    "stopped_", "stops_", "stop_", "quit_", "quits_", "quitted_",
+    "gave_up_", "gives_up_", "give_up_", "discontinued_", "ceased_",
+)
+
+# Bare negations: they end whatever the subject had with that object ("quit Smoking").
+NEGATION_WORDS = {
+    "stopped", "stops", "stop", "quit", "quits", "gave_up", "gives_up", "give_up",
+    "no_longer", "not", "is_not", "isnt", "discontinued", "ceased", "dropped",
+    "left", "leaves", "moved_from", "moved_out_of", "moved_away_from", "relocated_from",
 }
+
+# Only these predicates hold one value at a time; a new object replaces the old one.
+# Everything else (takes, has, likes, allergic_to, ...) accumulates.
+SINGLE_VALUED = {"lives_in", "works_at", "studies_at", "married_to", "age"}
+
+# Like and dislike of the same thing cannot both be true.
+OPPOSITES = {"likes": "dislikes", "dislikes": "likes"}
+
+# Pronouns are never stored as entities.
+PRONOUNS = {
+    "he", "she", "they", "him", "her", "them", "it", "his", "hers", "their",
+    "someone", "somebody", "anyone", "something", "this", "that",
+}
+
+# Roles without a name ("my doctor", "a friend") are junk as objects; service roles also as subjects.
+GENERIC_ROLES = {
+    "doctor", "physician", "nurse", "dentist", "pharmacist", "therapist", "specialist",
+    "cardiologist", "friend", "colleague", "boss", "people", "person", "family",
+    "sister", "brother", "mother", "father", "wife", "husband", "son", "daughter",
+    "parents", "partner", "cousin", "uncle", "aunt",
+}
+SERVICE_ROLES = {"doctor", "physician", "nurse", "dentist", "pharmacist", "therapist",
+                 "specialist", "cardiologist", "people", "person"}
 
 # Maps alternate names -> canonical name so the graph stays consistent.
 ENTITY_ALIASES = {
@@ -60,12 +95,25 @@ ENTITY_ALIASES = {
 
 # Predicate synonyms for deduplication.
 PREDICATE_SYNONYMS = {
-    "has": {"has", "have", "suffering_from", "diagnosed_with"},
-    "takes": {"takes", "take", "taking", "uses", "using", "on"},
-    "lives_in": {"lives_in", "live_in", "living_in", "resides_in", "based_in", "located_in"},
-    "likes": {"likes", "like", "loves", "love", "enjoys", "enjoy", "prefers", "prefer"},
-    "works_at": {"works_at", "work_at", "working_at", "employed_at", "employed_by"},
-    "allergic_to": {"allergic_to", "allergy_to"},
+    "has": {"has", "have", "having", "suffering_from", "diagnosed_with", "is_diagnosed_with",
+            "suffers_from"},
+    "takes": {"takes", "take", "taking", "took", "uses", "using", "on", "is_on", "is_taking",
+              "prescribed", "was_prescribed", "is_prescribed", "started_taking", "put_on",
+              "is_put_on", "was_put_on", "started_on"},
+    "lives_in": {"lives_in", "live_in", "living_in", "resides_in", "based_in", "located_in",
+                 "moved_to", "relocated_to", "shifted_to", "moved_into", "lives_at"},
+    "studies_at": {"studies_at", "study_at", "studying_at", "studies_in", "is_student",
+                   "is_student_at", "is_a_student_at", "student_at", "enrolled_at", "attends"},
+    "likes": {"likes", "like", "loves", "love", "enjoys", "enjoy", "prefers", "prefer",
+              "adores", "is_fond_of", "fond_of", "is_fan_of", "is_a_fan_of", "fan_of",
+              "is_a_huge_fan_of", "is_huge_fan_of", "is_big_fan_of", "is_a_big_fan_of"},
+    "dislikes": {"dislikes", "dislike", "hates", "hate", "detests", "cant_stand",
+                 "cannot_stand", "does_not_like", "doesnt_like", "dont_like", "do_not_like",
+                 "not_like", "does_not_enjoy", "doesnt_enjoy", "dont_enjoy"},
+    "works_at": {"works_at", "work_at", "working_at", "employed_at", "employed_by",
+                 "works_for", "work_for", "works_in"},
+    "allergic_to": {"allergic_to", "allergy_to", "is_allergic_to", "has_allergy_to",
+                    "has_allergy"},
 }
 
 # Build reverse lookup: predicate -> canonical form.
@@ -113,11 +161,6 @@ def _is_near_duplicate(graph_store, subject, predicate, obj):
     return False
 
 
-def _find_existing(graph_store, subject, predicate):
-    """Find active edges with the same subject and predicate (to detect updates)."""
-    return graph_store.find_edges(subject=subject, predicate=predicate, active_only=True)
-
-
 def _find_existing_canonical(graph_store, subject, predicate):
     """Find active edges with the same subject and any synonym predicate."""
     canonical = _canonical_predicate(predicate)
@@ -137,27 +180,71 @@ def _end_edge(graph_store, edge_fact, timestamp):
     graph_store.graph[source][target][key]["ended_at"] = timestamp
 
 
-def _is_negation(predicate):
-    """Return True if the predicate signals removal of a fact."""
-    return predicate in NEGATION_PREDICATES
+def negated_predicate(predicate):
+    """If `predicate` negates a fact, return the positive predicate it removes, else None.
+
+    "stops_taking" -> "takes", "no_longer_lives_in" -> "lives_in",
+    bare words like "quit" / "left" -> "" (any predicate with that object).
+    """
+    if predicate in NEGATION_WORDS:
+        return ""
+    for prefix in NEGATION_PREFIXES:
+        if predicate.startswith(prefix):
+            return _canonical_predicate(predicate[len(prefix):])
+    return None
 
 
-def _opposite_predicate(predicate):
-    """Map a negation predicate back to the positive form for lookup."""
-    mapping = {
-        "does_not_have": "has", "doesnt_have": "has",
-        "dont_have": "has", "do_not_have": "has",
-        "stopped_taking": "takes", "no_longer_takes": "takes",
-        "no_longer_has": "has",
-        "no_longer_lives_in": "lives_in", "moved_from": "lives_in", "left": "lives_in",
-        "dislikes": "likes", "hates": "likes",
-        "does_not_like": "likes", "doesnt_like": "likes",
-        "dont_like": "likes", "do_not_like": "likes",
-        "is_not": "is", "isnt": "is",
-        "stopped": "takes", "quit": "takes",
-        "stopped_using": "uses", "gave_up": "has",
-    }
-    return mapping.get(predicate)
+def _verb_stem(predicate):
+    """Rough stem of a predicate's first word: "drinking" / "drinks" -> "drink"."""
+    word = predicate.split("_")[0]
+    for suffix in ("ing", "es", "ed", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
+def _bare(name):
+    """Lowercase a name and drop a leading my/the/a: "My Doctor" -> "doctor"."""
+    return re.sub(r"^(my|the|a|an|your)\s+", "", name.lower())
+
+
+def is_junk(subject, predicate, obj):
+    """Return True for triples that are not real facts: pronouns, unnamed roles, self-loops."""
+    subject_bare, obj_bare = _bare(subject), _bare(obj)
+    if subject_bare in PRONOUNS or obj_bare in PRONOUNS:
+        return True
+    if subject_bare in SERVICE_ROLES:
+        return True  # "Doctor prescribed Insulin" - the fact is "User takes Insulin"
+    if obj_bare in GENERIC_ROLES and predicate not in ("is", "is_a", "works_as"):
+        return True  # "User is_treated_by Doctor", "User has Sister" (no name)
+    return subject_bare == obj_bare
+
+
+def _retire_negated(graph_store, subject, predicate, obj, timestamp):
+    """End the active facts that a negation like "stopped_taking Metformin" cancels.
+
+    Returns the list of retired fact dicts (empty if nothing matched).
+    """
+    positive = negated_predicate(predicate)
+    rest = predicate
+    for prefix in NEGATION_PREFIXES:
+        if predicate.startswith(prefix):
+            rest = predicate[len(prefix):]
+            break
+    retired = []
+    # "quit Coffee" also ends "drinks Black Coffee": the negated object's words must all
+    # appear in the stored object (one direction only, so "quit Black Coffee" keeps "Coffee").
+    negated_words = set(_bare(obj).split())
+    for edge_fact in graph_store.find_edges(subject=subject, active_only=True):
+        if not negated_words <= set(_bare(edge_fact["object"]).split()):
+            continue
+        edge_predicate = edge_fact["predicate"]
+        if (positive == ""
+                or _canonical_predicate(edge_predicate) == positive
+                or _verb_stem(edge_predicate) == _verb_stem(rest)):
+            _end_edge(graph_store, edge_fact, timestamp)
+            retired.append(edge_fact)
+    return retired
 
 
 def update_graph(graph_store, triples, timestamp):
@@ -165,29 +252,28 @@ def update_graph(graph_store, triples, timestamp):
     actions = []
     for triple in triples or []:
         subject = normalize_entity(triple.get("subject", ""))
-        predicate = normalize_predicate(triple.get("predicate", ""))
+        predicate = _canonical_predicate(normalize_predicate(triple.get("predicate", "")))
         obj = normalize_entity(triple.get("object", ""))
         object_type = triple.get("object_type")
 
         if not subject or not predicate or not obj:
             continue
 
-        # --- DELETE: the predicate itself is a negation ---
-        if _is_negation(predicate):
-            positive = _opposite_predicate(predicate)
-            if positive:
-                existing = _find_existing(graph_store, subject, positive)
-                ended_count = 0
-                for edge_fact in existing:
-                    if edge_fact["object"].lower() == obj.lower():
-                        _end_edge(graph_store, edge_fact, timestamp)
-                        ended_count += 1
-                if ended_count:
-                    actions.append({"op": "DELETE", "subject": subject,
-                                    "predicate": positive, "object": obj})
-                    continue
+        # --- SKIP: pronouns / unnamed roles are not facts ---
+        if is_junk(subject, predicate, obj):
             actions.append({"op": "SKIP", "subject": subject,
                             "predicate": predicate, "object": obj})
+            continue
+
+        # --- DELETE: the predicate is a negation; it is never stored itself ---
+        if negated_predicate(predicate) is not None:
+            retired = _retire_negated(graph_store, subject, predicate, obj, timestamp)
+            for edge_fact in retired:
+                actions.append({"op": "DELETE", "subject": subject,
+                                "predicate": edge_fact["predicate"], "object": obj})
+            if not retired:
+                actions.append({"op": "SKIP", "subject": subject,
+                                "predicate": predicate, "object": obj})
             continue
 
         # --- SKIP: exact duplicate already active ---
@@ -202,8 +288,14 @@ def update_graph(graph_store, triples, timestamp):
                             "predicate": predicate, "object": obj})
             continue
 
-        # --- UPDATE: same (subject, predicate-group) but different object ---
-        existing = _find_existing_canonical(graph_store, subject, predicate)
+        # --- UPDATE: single-valued predicate with a new object, or like <-> dislike flip ---
+        existing = []
+        if predicate in SINGLE_VALUED:
+            existing = _find_existing_canonical(graph_store, subject, predicate)
+        if predicate in OPPOSITES:
+            existing = [edge_fact for edge_fact in
+                        _find_existing_canonical(graph_store, subject, OPPOSITES[predicate])
+                        if edge_fact["object"].lower() == obj.lower()]
         if existing:
             for edge_fact in existing:
                 _end_edge(graph_store, edge_fact, timestamp)
@@ -244,8 +336,8 @@ if __name__ == "__main__":
     round2 = [
         {"subject": "User", "predicate": "has", "object": "Diabetes", "object_type": "CONDITION"},
         {"subject": "User", "predicate": "taking", "object": "Metformin", "object_type": "DRUG"},
-        {"subject": "User", "predicate": "lives_in", "object": "Mumbai", "object_type": "PLACE"},
-        {"subject": "User", "predicate": "stopped_taking", "object": "Metformin", "object_type": "DRUG"},
+        {"subject": "User", "predicate": "moved_to", "object": "Mumbai", "object_type": "PLACE"},
+        {"subject": "User", "predicate": "stops_taking", "object": "Metformin", "object_type": "DRUG"},
     ]
     print("\n--- Round 2 (SKIP / SKIP-near-dup / UPDATE / DELETE) ---")
     for action in update_graph(store, round2, "2026-10-29T11:00:00"):

@@ -89,6 +89,17 @@ Small models like **Llama 3.2 3B** have a short context window (2048 tokens), so
 
 ---
 
+## Web UI (3D)
+
+A second front end next to the Streamlit app: a FastAPI server (`server.py`) and a React app in `web/`, with the memory graph in 3D. It uses the same pipeline; `streamlit run app.py` still works.
+
+- **Chat:** each pipeline stage lights up as it runs, new facts draw into the graph, retired facts turn into dashed lines, and retrieved facts flow into the core by rank. Drag nodes, click one for its facts, scrub or replay the timeline, `⌘K` for commands. **Run demo** plays a script turn by turn; **Reset** clears the conversation, with or without memory.
+- **Compare:** the same messages go to two baselines (last 4 turns, full history) and to DMG, with live scores, prompt tokens per turn and a flag when a baseline repeats a retired fact.
+
+The built UI is committed in `web/dist`, so no Node is needed to run it (see Setup). Everything runs on localhost; fonts and libraries are bundled.
+
+---
+
 ## How it works
 
 **Entity types:** `PERSON`, `CONDITION`, `DRUG`, `PLACE`, `PREFERENCE`
@@ -118,7 +129,7 @@ Small models like **Llama 3.2 3B** have a short context window (2048 tokens), so
 | Embeddings | sentence-transformers (`all-MiniLM-L6-v2`, 384-dim) |
 | Vector search | FAISS (`IndexFlatIP`, cosine similarity) |
 | Retrieval fusion | Reciprocal Rank Fusion (RRF, k=60) |
-| UI | Streamlit |
+| UI | Streamlit; FastAPI + React/TypeScript + three.js (web UI) |
 | Visualization | matplotlib + NetworkX drawing |
 
 ---
@@ -133,6 +144,8 @@ dynamic-memory-graph/
 ├── problem_demo.py             # baseline vs DMG comparison demo
 ├── main.py                     # integration pipeline + CLI chat
 ├── app.py                      # Streamlit chat UI
+├── ui_core.py                  # helpers shared by app.py and server.py
+├── server.py                   # FastAPI server for the web UI
 │
 ├── modules/
 │   ├── query_rewriter.py       # coreference resolution (Abhishek)
@@ -144,7 +157,12 @@ dynamic-memory-graph/
 │
 ├── evaluation/
 │   ├── eval.py                 # Recall@k + ablation study (Kartika)
-│   └── test_conversations.json # test data for evaluation
+│   ├── test_conversations.json # test data for evaluation
+│   ├── run_demo.py             # scored 15-turn demo (same checks as Compare)
+│   └── *_script.json           # demo, long and holdout scripts
+│
+├── tests/test_memory.py        # memory update tests (no Ollama needed)
+├── web/                        # 3D web UI (React + TypeScript, built into web/dist)
 │
 ├── data/                       # graph.json is created here at runtime
 └── screenshots/                # graph visualizations and UI screenshots
@@ -188,6 +206,11 @@ Terminal chat:
 python main.py
 ```
 
+Web UI (3D), then open http://localhost:8000:
+```bash
+uvicorn server:app --port 8000
+```
+
 Streamlit UI:
 ```bash
 streamlit run app.py
@@ -207,6 +230,20 @@ python -m evaluation.eval --skip-llm   # quick check without Ollama
 Graph visualization:
 ```bash
 python -m modules.graph_viz
+```
+
+Tests and the scored demo:
+```bash
+python tests/test_memory.py
+python -m evaluation.run_demo
+```
+
+Editing the web UI needs Node 20+. Run the server on port 8000, then:
+```bash
+cd web
+npm install
+npm run dev     # http://localhost:5173, proxies /api to port 8000
+npm run build   # updates web/dist; commit it with your change
 ```
 
 ---

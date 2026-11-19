@@ -8,6 +8,8 @@ is saved to data/graph.json with networkx node_link_data / node_link_graph.
 Oct 31 update: added expand() for multi-hop graph walks and rerank() for
 recency-based re-ranking of retrieved facts.
 
+Nov 18 update: stats() also reports active_edges (edges not retired).
+
 Usage (from the project root):
     from modules.graph_store import GraphStore
     store = GraphStore().load()
@@ -210,8 +212,11 @@ class GraphStore:
     # ---------- Housekeeping ----------
 
     def stats(self):
-        """Return node and edge counts."""
-        return {"nodes": self.graph.number_of_nodes(), "edges": self.graph.number_of_edges()}
+        """Return node and edge counts (edges includes retired ones)."""
+        active = sum(1 for *_, data in self.graph.edges(keys=True, data=True)
+                     if not data.get("ended_at"))
+        return {"nodes": self.graph.number_of_nodes(), "edges": self.graph.number_of_edges(),
+                "active_edges": active}
 
     def clear(self):
         """Delete everything in the graph (does not touch the file until save())."""

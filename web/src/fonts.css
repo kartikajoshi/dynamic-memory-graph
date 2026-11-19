@@ -1,0 +1,6 @@
+/* Geist Sans + Geist Mono (SIL OFL 1.1, Vercel), bundled from node_modules: no font requests leave localhost. */
+@font-face { font-family: "Geist"; font-weight: 400; font-display: block; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Geist"; font-weight: 500; font-display: block; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Medium.woff2") format("woff2"); }
+@font-face { font-family: "Geist"; font-weight: 600; font-display: block; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-SemiBold.woff2") format("woff2"); }
+@font-face { font-family: "Geist Mono"; font-weight: 400; font-display: block; src: url("../node_modules/geist/dist/fonts/geist-mono/GeistMono-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Geist Mono"; font-weight: 500; font-display: block; src: url("../node_modules/geist/dist/fonts/geist-mono/GeistMono-Medium.woff2") format("woff2"); }

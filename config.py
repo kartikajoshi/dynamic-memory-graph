@@ -3,6 +3,9 @@ Shared configuration for the Dynamic Memory Graph project.
 
 Every module imports its settings from here so values stay consistent:
     from config import MODEL_NAME, GRAPH_PATH
+
+Nov 18 update: added ORGANIZATION / FOOD / OTHER entity types, a dense-score
+relevance cutoff for retrieval, and a lower answer temperature.
 """
 
 import os
@@ -18,10 +21,11 @@ TEST_CONVERSATIONS_PATH = os.path.join(EVAL_DIR, "test_conversations.json")
 MODEL_NAME = "llama3.2:3b"
 CONTEXT_WINDOW = 2048          # tokens available to the model
 LLM_TEMPERATURE = 0.0          # deterministic output for extraction / rewriting
-ANSWER_TEMPERATURE = 0.7       # a little variety for final chat answers
+ANSWER_TEMPERATURE = 0.2       # low, so answers stay grounded and repeatable
 
 # ---------- Extraction ----------
-ENTITY_TYPES = ["PERSON", "CONDITION", "DRUG", "PLACE", "PREFERENCE"]
+# OTHER is the fallback for any type the model invents.
+ENTITY_TYPES = ["PERSON", "CONDITION", "DRUG", "PLACE", "ORGANIZATION", "FOOD", "PREFERENCE", "OTHER"]
 USER_NODE = "User"             # canonical name for the person chatting
 
 # ---------- Query rewriting ----------
@@ -40,6 +44,7 @@ BM25_TOP_K = 10                # candidates from BM25 before fusion
 DENSE_TOP_K = 10               # candidates from FAISS before fusion
 GRAPH_TOP_K = 10               # candidates from graph expansion before fusion
 RRF_K = 60                     # standard Reciprocal Rank Fusion constant
+DENSE_MIN_SCORE = 0.40         # cosine score a fact needs to count as relevant on its own
 
 # ---------- Evaluation ----------
 RECALL_K_VALUES = [1, 3, 5]

@@ -1,0 +1,143 @@
+{
+  "description": "15-turn regression script. Shared by evaluation/run_demo.py (core) and the Compare tab's 'Run demo script' button (UI). Per turn: expect = keywords that must ALL appear in the answer (case-insensitive); forbid = phrases that must NOT appear. Final graph checks use keyword lists matched case-insensitively against fact['text']: final_active = some ACTIVE fact contains all keywords; final_retired = some RETIRED fact contains all keywords AND no ACTIVE fact does; final_absent = no ACTIVE fact contains all keywords.",
+  "turns": [
+    {
+      "message": "I'm diabetic and I take Metformin every morning."
+    },
+    {
+      "message": "My sister Priya lives in Pune."
+    },
+    {
+      "message": "I live in Bengaluru and work at Infosys."
+    },
+    {
+      "message": "I love filter coffee but I hate spicy food."
+    },
+    {
+      "message": "My doctor also put me on Insulin."
+    },
+    {
+      "message": "She is allergic to peanuts."
+    },
+    {
+      "message": "Recommend a history book in one line.",
+      "forbid": [
+        "don't have any information",
+        "do not have any information",
+        "not aware of any previous"
+      ]
+    },
+    {
+      "message": "Give me a pasta tip in one line.",
+      "forbid": [
+        "don't have any information",
+        "do not have any information",
+        "not aware of any previous"
+      ]
+    },
+    {
+      "message": "What medicines do I take?",
+      "expect": [
+        "metformin",
+        "insulin"
+      ]
+    },
+    {
+      "message": "Can I take it at night?",
+      "expect": [
+        "metformin"
+      ]
+    },
+    {
+      "message": "Where does my sister live?",
+      "expect": [
+        "pune"
+      ]
+    },
+    {
+      "message": "I moved to Mumbai last month."
+    },
+    {
+      "message": "I stopped taking Metformin."
+    },
+    {
+      "message": "Where do I live and what do I drink?",
+      "expect": [
+        "mumbai",
+        "coffee"
+      ]
+    },
+    {
+      "message": "What do I dislike?",
+      "expect": [
+        "spicy"
+      ],
+      "forbid": [
+        "peanut"
+      ]
+    }
+  ],
+  "final_active": [
+    [
+      "user",
+      "diabetes"
+    ],
+    [
+      "user",
+      "insulin"
+    ],
+    [
+      "user",
+      "sister",
+      "priya"
+    ],
+    [
+      "priya",
+      "pune"
+    ],
+    [
+      "user",
+      "infosys"
+    ],
+    [
+      "user",
+      "filter coffee"
+    ],
+    [
+      "user",
+      "spicy food"
+    ],
+    [
+      "priya",
+      "peanut"
+    ],
+    [
+      "user",
+      "mumbai"
+    ]
+  ],
+  "final_retired": [
+    [
+      "user",
+      "take",
+      "metformin"
+    ],
+    [
+      "user",
+      "live",
+      "bangalore"
+    ]
+  ],
+  "final_absent": [
+    [
+      "user",
+      "peanut"
+    ],
+    [
+      "doctor"
+    ],
+    [
+      "stop"
+    ]
+  ]
+}

@@ -10,6 +10,11 @@ with Reciprocal Rank Fusion (RRF):
 
 main.py keeps calling retrieve(), so nothing else has to change.
 
+Nov 18 update: relevance cutoff. A general question ("Give me a pasta tip")
+only gets facts that share a keyword, score >= DENSE_MIN_SCORE, or are linked
+to an entity named in the query. Questions about the user ("what do I take?",
+"my sister") still start the graph walk from User and get the top facts.
+
 Usage (from the project root):
     from modules.retriever import retrieve
     facts = retrieve("What medicine do I take?", store)
@@ -28,6 +33,7 @@ from sentence_transformers import SentenceTransformer
 
 from config import (
     BM25_TOP_K,
+    DENSE_MIN_SCORE,
     DENSE_TOP_K,
     EMBEDDING_MODEL,
     GRAPH_TOP_K,
@@ -38,6 +44,9 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+
+# A question about the user themself may use any of their facts.
+ABOUT_USER = re.compile(r"\b(i|i'm|my|mine|myself)\b|\babout me\b")
 
 # Lazy-loaded embedding model (loaded on first call to avoid slow imports at startup).
 _model = None
@@ -135,12 +144,12 @@ def dense_search(query, facts, top_k=DENSE_TOP_K):
 
 # ---------- Graph expansion ----------
 
-def _extract_entities(query, facts):
+def _extract_entities(query, facts, include_user=True):
     """Find entity names from facts that appear in the query (simple substring match)."""
     query_lower = query.lower()
     entities = set()
-    # Always include User since queries are about the user.
-    entities.add(USER_NODE)
+    if include_user:
+        entities.add(USER_NODE)
     for fact in facts:
         for field in ("subject", "object"):
             name = fact.get(field, "")
@@ -149,9 +158,9 @@ def _extract_entities(query, facts):
     return entities
 
 
-def graph_search(query, graph_store, facts, top_k=GRAPH_TOP_K):
-    """Expand from entities mentioned in the query and rerank by recency."""
-    seed_entities = _extract_entities(query, facts)
+def graph_search(query, graph_store, facts, top_k=GRAPH_TOP_K, include_user=True):
+    """Expand from entities mentioned in the query (plus User) and rerank by recency."""
+    seed_entities = _extract_entities(query, facts, include_user)
     if not seed_entities:
         return []
 
@@ -162,6 +171,11 @@ def graph_search(query, graph_store, facts, top_k=GRAPH_TOP_K):
 
 # ---------- Reciprocal Rank Fusion ----------
 
+def _fact_id(fact):
+    """Unique id of a fact edge."""
+    return (fact.get("source", ""), fact.get("target", ""), fact.get("key", ""))
+
+
 def rrf_fuse(ranked_lists, k=RRF_K):
     """Merge multiple ranked lists using RRF. Each list is [(fact, score), ...]."""
     scores = {}
@@ -169,7 +183,7 @@ def rrf_fuse(ranked_lists, k=RRF_K):
 
     for ranked in ranked_lists:
         for rank, (fact, _score) in enumerate(ranked, start=1):
-            fact_id = (fact.get("source", ""), fact.get("target", ""), fact.get("key", ""))
+            fact_id = _fact_id(fact)
             fact_map[fact_id] = fact
             scores[fact_id] = scores.get(fact_id, 0.0) + 1.0 / (k + rank)
 
@@ -185,11 +199,19 @@ def retrieve(query, graph_store, top_k=TOP_K):
     if not facts:
         return []
 
+    about_user = bool(ABOUT_USER.search(query.lower()))
     bm25_results = bm25_search(query, facts, top_k=BM25_TOP_K)
     dense_results = dense_search(query, facts, top_k=DENSE_TOP_K)
-    graph_results = graph_search(query, graph_store, facts, top_k=GRAPH_TOP_K)
+    graph_results = graph_search(query, graph_store, facts, top_k=GRAPH_TOP_K,
+                                 include_user=about_user)
 
     fused = rrf_fuse([bm25_results, dense_results, graph_results], k=RRF_K)
+
+    if not about_user:
+        # General question: keep only facts that clearly match it.
+        relevant = {_fact_id(fact) for fact, _ in bm25_results + graph_results}
+        relevant |= {_fact_id(fact) for fact, score in dense_results if score >= DENSE_MIN_SCORE}
+        fused = [(fact, score) for fact, score in fused if _fact_id(fact) in relevant]
 
     logger.info("Retrieval: %d BM25, %d dense, %d graph -> %d fused",
                 len(bm25_results), len(dense_results), len(graph_results), len(fused))

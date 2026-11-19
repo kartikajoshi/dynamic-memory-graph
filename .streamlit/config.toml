@@ -1,0 +1,15 @@
+# Dark base theme so native widgets (selectbox, slider, toggle) match the custom CSS in app.py.
+[theme]
+base = "dark"
+primaryColor = "#f2e8d5"
+backgroundColor = "#0d0d0e"
+secondaryBackgroundColor = "#1c1c1d"
+textColor = "#e9e3d6"
+
+[browser]
+gatherUsageStats = false
+
+# Re-render open tabs when a source file is saved, instead of leaving them on stale code
+# behind a "File change - Rerun" banner (that stale page is what made the graph look frozen).
+[server]
+runOnSave = true

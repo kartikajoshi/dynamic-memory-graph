@@ -1,0 +1,125 @@
+{
+  "description": "Long-conversation script for the Compare tab ('Long conversation'), same schema and semantics as demo_script.json (expect / forbid per turn; final_active / final_retired / final_absent graph checks; see that file). Four short fact turns, then eight long turns in which the user pastes text (notes, an email, a recipe, ...) so the full-history baseline passes the 2048-token context window and fit_history() drops the oldest turns, then two updates (a stopped medicine, a move) and five questions about facts from the first turns. Entities do not appear in demo_script.json or the extractor's examples. Pasted passages are original text written for this test. Added Nov 19 (UI redesign); run it from the terminal with: python -c \"from evaluation.run_demo import run_script, load_script; run_script(load_script('evaluation/long_script.json'))\"",
+  "turns": [
+    {
+      "message": "Some background before we start: I live in Hyderabad and I work at Wipro as a data analyst."
+    },
+    {
+      "message": "My sister Meera lives in Kochi. She is a pediatrician."
+    },
+    {
+      "message": "I take Atorvastatin for cholesterol and Metoprolol for blood pressure."
+    },
+    {
+      "message": "I love masala chai but I can't stand mushrooms."
+    },
+    {
+      "message": "Can you turn these meeting notes into three short bullet points? Notes: We met to review the plan for moving the reporting dashboards from the old on-premise server to the cloud warehouse. The current server is slow at month end because every team runs heavy exports at the same time, and two dashboards timed out last quarter. The proposal is to move the sales and inventory dashboards first, because they have the cleanest source tables, and to leave finance for the second phase since its tables still depend on manual spreadsheet uploads. Everyone agreed that nightly refreshes are enough for sales, but inventory needs refreshes every two hours during the festive season. The main risks raised were cost surprises from badly written queries, losing the custom colour rules people rely on, and confusion if both the old and new dashboards stay live for too long. We agreed to run both in parallel for exactly two weeks, publish a short guide on where each report now lives, and set a monthly budget alert on the warehouse account before any migration starts."
+    },
+    {
+      "message": "Please rewrite this message to our housing society committee so it sounds polite and is half as long: Dear committee members, I am writing about the water supply timings that were changed at the start of this month without any notice on the group or the notice board. Earlier the overhead tank was filled twice a day, in the morning and in the evening, but now it seems to be filled only once, late at night, and by seven in the morning the pressure on the upper floors is so low that the geysers do not start. Several families with school-going children and elderly parents have been struggling to get ready on time. I understand that there may be a good reason, such as the pump being repaired or a change in the municipal schedule, but it would really help if the committee could explain what happened, tell us how long this will last, and consider adding a short morning cycle. I am happy to help draft a notice or collect feedback from residents if that is useful. Thank you for all the work you do for the building."
+    },
+    {
+      "message": "Explain these lecture notes in two simple sentences: Rooftop rainwater harvesting collects runoff from roofs and sends it either into storage tanks or into recharge pits that refill shallow groundwater. A typical system has a catchment surface, gutters, a first-flush device that throws away the dirtiest first few minutes of rain, a filter of sand, gravel and charcoal, and then the tank or pit. The amount that can be collected is roughly the roof area multiplied by the annual rainfall and by a runoff coefficient, which is high for concrete and lower for tiles or green roofs. In cities with hard surfaces most rain becomes runoff that floods drains, so even modest recharge pits spread across many buildings can raise local water tables over a few years. The lecturer stressed maintenance: filters clog, mosquitoes breed in open tanks, and recharge pits need to be kept away from septic tanks so that dirty water does not reach the groundwater."
+    },
+    {
+      "message": "Give me one line of feedback on this opening paragraph of a short story I'm writing: The lift in our building had been broken for so long that people had started giving directions by it, turn left at the lift that does not work, the way you might mention a temple or a tea stall. On the ninth floor lived a retired railway clerk who kept a ledger of every complaint ever made about it, with dates, names and the exact words people had used, as if one day there would be a trial and he would be called as the only reliable witness. Children raced each other up the stairs and the old clerk timed them with a steel stopwatch, writing the results in the back of the same ledger, so that the history of the broken lift and the history of the fastest child on the staircase were bound together in one thick, slightly damp book that smelled of camphor."
+    },
+    {
+      "message": "Compare these two laptops for data analysis work and answer in one line. Laptop A: 14 inch screen, 16 GB RAM that cannot be upgraded, 512 GB SSD, a recent eight-core mobile processor, integrated graphics, 1.3 kg, about 12 hours of battery in reviews, two USB-C ports and one USB-A port, no HDMI. Laptop B: 15.6 inch screen, 8 GB RAM in one slot with a second empty slot so it can go up to 32 GB, 1 TB SSD, a slightly older six-core processor, an entry-level graphics card, 2.1 kg, about 6 hours of battery, HDMI, Ethernet and three USB-A ports. Both cost about the same. I mostly work with large spreadsheets, Python notebooks with pandas, and occasionally train small models, I travel for work about once a month, and I usually plug into an external monitor at my desk."
+    },
+    {
+      "message": "Turn these rough notes into a simple three-day plan, one line per day: Want to see Hampi in three days with a friend. We arrive by overnight bus early on day one, so the first morning should be easy. Must see the Virupaksha temple, the stone chariot at the Vittala temple, and the sunset from Hemakuta hill. Would like to try a coracle ride if the river is calm, and rent bicycles for one day instead of autos because the ruins are spread out. Lunch should be near the bazaar or across the river where the cafes are. We are not great with heat, so the afternoons should have something shaded or a rest. Museum at Kamalapura only if there is time. Last day bus leaves in the evening, so keep that day close to the bus stand and finish with something relaxed like the riverside walk."
+    },
+    {
+      "message": "Proofread this paragraph and fix only grammar mistakes, then reply with the corrected paragraph: Over the last four years in my current role I has built reporting pipelines that serve more than three hundred users across sales, supply chain and customer support. Most of my work involve cleaning messy source data, designing tables that analysts can actually understand, and turning recurring questions into dashboards so that people stop waiting on ad hoc requests. I enjoy explaining numbers to people who do not work with data every day, and I have run short workshops on reading charts correctly and on avoiding common mistakes with averages. I am now looking for a role where I can spend more time on forecasting and experimentation, and where the data team work closely with product decisions instead of only producing reports after the fact."
+    },
+    {
+      "message": "Summarise this recipe in two lines and suggest a substitute for curd: Soak one cup of rice and a quarter cup of urad dal separately for five hours, then grind them into a smooth batter with a little water and leave it overnight to ferment in a warm place. In the morning add salt and a spoon of curd to soften the batter, then stir in finely chopped onion, green chilli, grated carrot and coriander. Heat a paniyaram pan, add a few drops of oil to each cavity, and fill them three quarters full. Cook on low heat with a lid until the bottoms are golden, turn each one with a skewer, and cook the other side for two more minutes. Serve hot with coconut chutney or a quick tomato chutney. Leftover batter keeps for two days in the fridge but becomes more sour each day."
+    },
+    {
+      "message": "I stopped taking Metoprolol."
+    },
+    {
+      "message": "I moved to Jaipur last month."
+    },
+    {
+      "message": "Where does my sister live?",
+      "expect": [
+        "kochi"
+      ]
+    },
+    {
+      "message": "What medicines do I take?",
+      "expect": [
+        "atorvastatin"
+      ]
+    },
+    {
+      "message": "Where do I work?",
+      "expect": [
+        "wipro"
+      ]
+    },
+    {
+      "message": "Which city do I live in now?",
+      "expect": [
+        "jaipur"
+      ]
+    },
+    {
+      "message": "What drink do I like and what food do I avoid?",
+      "expect": [
+        "chai",
+        "mushroom"
+      ]
+    }
+  ],
+  "final_active": [
+    [
+      "user",
+      "sister",
+      "meera"
+    ],
+    [
+      "meera",
+      "kochi"
+    ],
+    [
+      "user",
+      "wipro"
+    ],
+    [
+      "user",
+      "atorvastatin"
+    ],
+    [
+      "user",
+      "chai"
+    ],
+    [
+      "user",
+      "mushroom"
+    ],
+    [
+      "user",
+      "jaipur"
+    ]
+  ],
+  "final_retired": [
+    [
+      "user",
+      "metoprolol"
+    ],
+    [
+      "user",
+      "live",
+      "hyderabad"
+    ]
+  ],
+  "final_absent": [
+    [
+      "stop"
+    ]
+  ]
+}

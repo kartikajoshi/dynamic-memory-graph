@@ -8,6 +8,10 @@ the full RRF-fused retriever.
 Metrics:
     Recall@k  =  |relevant facts in top-k| / |all relevant facts|
 
+Nov 18 update: Recall@k now ignores "_" vs " " ("User lives_in Bangalore"
+matches the stored text "User lives in Bangalore"); before, every expected
+fact with an underscore predicate counted as a miss.
+
 Run from the project root (Ollama must be running):
     python -m evaluation.eval
 
@@ -88,11 +92,12 @@ def recall_at_k(retrieved_facts, expected_texts, k):
     if not expected_texts:
         return 1.0  # Nothing to find -> perfect recall.
 
-    retrieved_texts = set()
-    for fact in retrieved_facts[:k]:
-        retrieved_texts.add(fact["text"].lower())
+    def norm(text):
+        """Lowercase and treat underscores as spaces."""
+        return text.lower().replace("_", " ")
 
-    found = sum(1 for exp in expected_texts if exp.lower() in retrieved_texts)
+    retrieved_texts = {norm(fact["text"]) for fact in retrieved_facts[:k]}
+    found = sum(1 for exp in expected_texts if norm(exp) in retrieved_texts)
     return found / len(expected_texts)
 
 

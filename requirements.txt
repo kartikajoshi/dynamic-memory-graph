@@ -1,9 +1,11 @@
-ollama>=0.3.0
+ollama>=0.6
 networkx>=3.2
 rank-bm25>=0.2.2
 sentence-transformers>=2.7.0
 faiss-cpu>=1.8.0
 numpy>=1.24
-streamlit>=1.35.0
+streamlit>=1.67
 matplotlib>=3.8.0
 pyvis>=0.3.2
+fastapi>=0.110
+uvicorn>=0.29

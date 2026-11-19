@@ -24,3 +24,9 @@ data/*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Web UI
+web/node_modules/
+
+# pyvis output
+lib/

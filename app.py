@@ -3,37 +3,53 @@ Streamlit chat UI (owner: Kartika).
 
 A web interface for the Dynamic Memory Graph pipeline with two modes:
     1. Chat     - talk to the DMG assistant with a LIVE split-screen graph
-    2. Compare  - side-by-side baseline vs DMG on the same messages
+    2. Compare  - side-by-side baselines vs DMG on the same messages
+
+Nov 18 update: one pipeline per browser session; the live graph is coloured by
+entity type, highlights what changed / was used each turn, keeps a stable
+layout and can replay how memory grew. Compare mode now has a model picker,
+two fair baselines (last 4 turns / full history), latency + token evidence,
+and a "Run demo script" button that scores every column.
 
 Run from the project root (Ollama must be running):
     streamlit run app.py
 """
 
-import streamlit as st
-import streamlit.components.v1 as components
-import json
+import html
 import os
 import tempfile
-from datetime import datetime
+import uuid
 
-import ollama
-from pyvis.network import Network
+import streamlit as st
 
-from config import (
-    ANSWER_TEMPERATURE,
-    CONTEXT_WINDOW,
-    HISTORY_TURNS,
-    MODEL_NAME,
-    TOP_K,
+from config import GRAPH_PATH, MODEL_NAME
+from modules.graph_viz import build_graph_html, changes_at, stable_layout, timeline_steps
+from ui_core import (  # helpers shared with server.py (moved here unchanged)
+    COLUMNS,
+    EXAMPLES_CHAT,
+    EXAMPLES_COMPARE,
+    SHORT_NAMES,
+    change_caption,
+    check_graph,
+    column_scores,
+    compare_turn,
+    diff_changes,
+    dmg_respond,
+    evidence_line,
+    facts_markdown,
+    graph_snapshot,
+    load_script,
+    make_pipeline,
+    memory_counts,
 )
-from main import DMGPipeline, format_facts
+from ui_core import list_models as _list_models
 
 # ─── Page config ───
 st.set_page_config(
     page_title="Dynamic Memory Graph",
     page_icon="",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 
 # ─── Theme: warm cream on charcoal, serif display headings ───
@@ -58,14 +74,14 @@ st.markdown("""
 [data-testid="stHeader"] { background: transparent !important; }
 [data-testid="stSidebar"] { background: var(--panel) !important; border-right: 1px solid var(--border) !important; }
 [data-testid="stSidebar"] .block-container { padding-top: 1.75rem !important; }
-.block-container { padding-top: 2rem !important; padding-bottom: 2.5rem !important; max-width: 1180px !important; }
+.block-container { padding-top: 2rem !important; padding-bottom: 2.5rem !important; max-width: 1240px !important; }
 
 /* ── Typography (never blanket span/div, or Material icons break) ── */
 .stApp, .stApp p, .stApp li, .stApp label,
 .stApp input, .stApp textarea,
 [data-testid="stMarkdownContainer"],
 [data-testid="stMarkdownContainer"] * {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     color: var(--text);
 }
 [data-testid="stIconMaterial"],
@@ -74,7 +90,7 @@ span[class*="material-symbols"],
     font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
 }
 h1, h2, h3, .serif {
-    font-family: 'Playfair Display', Georgia, serif !important;
+    font-family: 'Playfair Display', Georgia, 'Times New Roman', serif !important;
     color: var(--cream) !important;
     letter-spacing: 0.2px !important;
 }
@@ -85,7 +101,7 @@ h1, h2, h3, .serif {
 
 /* ── Header bar ── */
 .app-header {
-    display: flex; align-items: center; gap: 15px;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px 15px;
     padding: 0 0 18px 0; border-bottom: 1px solid var(--border); margin-bottom: 20px;
 }
 .app-header .brand { font-family: 'Playfair Display', Georgia, serif; font-size: 25px; font-weight: 700; color: var(--cream); line-height: 1; }
@@ -93,42 +109,62 @@ h1, h2, h3, .serif {
 .app-header .subtitle { font-size: 13.5px; color: var(--muted); letter-spacing: 0.3px; }
 .app-header .status { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
 .app-header .dot { width: 7px; height: 7px; border-radius: 50%; background: #6ee7a8; box-shadow: 0 0 8px rgba(110,231,168,0.6); }
+.app-header .dot.off { background: #f87171; box-shadow: 0 0 8px rgba(248,113,113,0.6); }
+@media (max-width: 700px) { .app-header .divider, .app-header .subtitle { display: none; } }
 
-/* ── Mode switcher pills ── */
-div[data-testid="stRadio"] > div {
+/* ── Mode switcher pills (Streamlit 1.5x+ radio DOM) ── */
+[data-testid="stRadioGroup"] {
     display: inline-flex !important; gap: 4px !important;
     background: var(--panel-2) !important; border: 1px solid var(--border) !important;
     border-radius: 11px !important; padding: 4px !important;
 }
-div[data-testid="stRadio"] > div > label {
-    text-align: center !important; padding: 8px 26px !important; border-radius: 8px !important;
-    font-size: 14px !important; font-weight: 500 !important; color: var(--cream-dim) !important;
-    cursor: pointer !important; transition: all 0.15s ease !important; border: none !important; background: transparent !important;
+[data-testid="stRadioOption"] {
+    padding: 8px 26px !important; margin: 0 !important; border-radius: 8px !important;
+    cursor: pointer !important; transition: all 0.15s ease !important;
 }
-div[data-testid="stRadio"] > div > label:hover { color: var(--cream) !important; }
-div[data-testid="stRadio"] > div > label:has(input:checked) { background: var(--cream) !important; box-shadow: 0 1px 5px rgba(0,0,0,0.45) !important; }
-div[data-testid="stRadio"] > div > label:has(input:checked) * { color: #161616 !important; font-weight: 600 !important; }
-div[data-testid="stRadio"] > label { display: none !important; }
+[data-testid="stRadioOption"] > div > div:first-child { display: none !important; }  /* radio circle */
+[data-testid="stRadioOption"] p { font-size: 14px !important; font-weight: 500 !important; color: var(--cream-dim) !important; }
+[data-testid="stRadioOption"]:hover p { color: var(--cream) !important; }
+[data-testid="stRadioOption"]:has(input:checked) { background: var(--cream) !important; box-shadow: 0 1px 5px rgba(0,0,0,0.45) !important; }
+[data-testid="stRadioOption"]:has(input:checked) p { color: #161616 !important; font-weight: 600 !important; }
 
 /* ── Buttons ── */
-.stButton > button {
+.stButton button {
     border-radius: 9px !important; font-size: 14px !important; font-weight: 500 !important;
     padding: 9px 16px !important; border: 1px solid var(--border) !important;
     background: var(--panel-2) !important; color: var(--cream-dim) !important; transition: all 0.15s ease !important;
 }
-.stButton > button:hover { border-color: var(--cream-dim) !important; color: var(--cream) !important; background: #232324 !important; }
-.stButton > button[kind="primary"] { background: var(--cream) !important; color: #161616 !important; border: 1px solid var(--cream) !important; font-weight: 600 !important; }
-.stButton > button[kind="primary"]:hover { background: #fff4e2 !important; color: #000 !important; }
+.stButton button:hover { border-color: var(--cream-dim) !important; color: var(--cream) !important; background: #232324 !important; }
+.stButton button[kind="primary"] { background: var(--cream) !important; color: #161616 !important; border: 1px solid var(--cream) !important; font-weight: 600 !important; }
+.stButton button[kind="primary"] * { color: #161616 !important; }
+.stButton button[kind="primary"]:hover { background: #fff4e2 !important; color: #000 !important; }
+/* Example prompts: compact suggestion chips */
+[class*="st-key-ex_"] button { font-size: 13px !important; padding: 8px 13px !important; }
+[class*="st-key-ex_"] button p { color: var(--cream-dim) !important; }
 
 /* ── Metric cards ── */
-[data-testid="stMetric"] { background: var(--panel-2) !important; border: 1px solid var(--border) !important; border-radius: 12px !important; padding: 15px 18px !important; }
+[data-testid="stMetric"] { background: var(--panel-2) !important; border: 1px solid var(--border) !important; border-radius: 12px !important; padding: 12px 16px !important; }
 [data-testid="stMetric"] label, [data-testid="stMetric"] label * { font-size: 11.5px !important; font-weight: 500 !important; letter-spacing: 0.4px !important; color: var(--muted) !important; text-transform: none !important; }
-[data-testid="stMetricValue"] { font-family: 'Playfair Display', Georgia, serif !important; font-size: 29px !important; font-weight: 700 !important; color: var(--cream) !important; }
+[data-testid="stMetricValue"] { font-family: 'Playfair Display', Georgia, serif !important; font-size: 26px !important; font-weight: 700 !important; color: var(--cream) !important; }
+
+/* ── Sidebar memory counts ── */
+.stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
+.stat-row div { background: var(--panel-2); border: 1px solid var(--border); border-radius: 11px; padding: 10px 8px; text-align: center; }
+.stat-row b { display: block; font-family: 'Playfair Display', Georgia, serif; font-size: 24px; color: var(--cream); line-height: 1.1; }
+.stat-row span { font-size: 10.5px; color: var(--muted); letter-spacing: 0.3px; }
 
 /* ── Labels ── */
 .sec-label { font-size: 11.5px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin: 4px 0 11px 0; }
 .panel-label { font-size: 11.5px; font-weight: 600; letter-spacing: 0.9px; text-transform: uppercase; color: var(--muted); margin: 0 0 12px 2px; display: flex; align-items: center; gap: 8px; }
 .panel-label .live { width: 6px; height: 6px; border-radius: 50%; background: #a855f7; box-shadow: 0 0 7px rgba(168,85,247,0.7); }
+.note { display: inline-block; font-size: 12.5px; color: var(--cream-dim); background: var(--panel-2); border: 1px solid var(--border); border-radius: 20px; padding: 5px 13px; margin: 0 auto 14px auto; }
+
+/* ── Answer cards (Compare) ── */
+[class*="st-key-card_"] { background: var(--panel) !important; border: 1px solid var(--border) !important; border-radius: 12px !important; }
+.card-head { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; color: var(--muted); }
+.card-head .pass { color: #6ee7a8; } .card-head .fail { color: #f87171; }
+.you-line { font-size: 14px; color: var(--cream); margin: 16px 0 8px 2px; }
+.you-line b { font-size: 10.5px; letter-spacing: 0.9px; text-transform: uppercase; color: var(--muted); margin-right: 8px; }
 
 /* ── Expanders ── */
 [data-testid="stExpander"] { background: var(--panel-2) !important; border: 1px solid var(--border) !important; border-radius: 10px !important; }
@@ -140,22 +176,51 @@ div[data-testid="stRadio"] > label { display: none !important; }
 [data-testid="stChatMessage"] p { font-size: 14.5px !important; line-height: 1.65 !important; }
 
 /* ── Chat input ── */
-[data-testid="stChatInput"] { border-top: 1px solid var(--border) !important; padding-top: 16px !important; }
-[data-testid="stChatInput"] textarea { background: var(--panel-2) !important; border: 1px solid var(--border) !important; border-radius: 12px !important; color: var(--text) !important; font-size: 14px !important; }
-[data-testid="stChatInput"] textarea::placeholder { color: var(--faint) !important; }
-[data-testid="stChatInput"] button { color: var(--cream) !important; }
+/* One rounded field with the send button inside it (Streamlit nests a bordered textarea
+   inside a bordered box by default; flatten the inner one). Structural selectors only, so
+   this survives Streamlit's generated class names changing. */
+[data-testid="stBottom"] > div, [data-testid="stBottomBlockContainer"] { background: var(--bg) !important; }
+[data-testid="stBottomBlockContainer"] { padding-top: 10px !important; padding-bottom: 22px !important; }
+[data-testid="stChatInput"] > div {
+    background: var(--panel-2) !important; border: 1px solid var(--border) !important;
+    border-radius: 16px !important; padding: 7px 7px 7px 18px !important;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.38) !important;
+    transition: border-color .15s ease, box-shadow .15s ease !important;
+}
+[data-testid="stChatInput"] > div:focus-within {
+    border-color: rgba(242,232,213,0.32) !important;
+    box-shadow: 0 0 0 3px rgba(242,232,213,0.06), 0 8px 28px rgba(0,0,0,0.38) !important;
+}
+[data-testid="stChatInput"] > div > div { align-items: center !important; gap: 10px !important; }
+[data-testid="stChatInputTextArea"] {
+    background: transparent !important; border: none !important; border-radius: 0 !important;
+    box-shadow: none !important; outline: none !important; padding: 8px 0 !important;
+    min-height: 38px !important; color: var(--text) !important;
+    font-size: 14.5px !important; line-height: 1.5 !important; caret-color: var(--cream) !important;
+}
+[data-testid="stChatInputTextArea"]::placeholder { color: var(--faint) !important; }
+[data-testid="stChatInputSubmitButton"] {
+    width: 38px !important; height: 38px !important; min-width: 38px !important;
+    border-radius: 11px !important; background: var(--cream) !important; color: #161616 !important;
+    transition: background .15s ease, transform .1s ease !important;
+}
+[data-testid="stChatInputSubmitButton"] svg { color: #161616 !important; }
+[data-testid="stChatInputSubmitButton"]:not(:disabled):hover { background: #fff4e2 !important; }
+[data-testid="stChatInputSubmitButton"]:not(:disabled):active { transform: scale(0.94) !important; }
+[data-testid="stChatInputSubmitButton"]:disabled { background: rgba(242,232,213,0.08) !important; }
+[data-testid="stChatInputSubmitButton"]:disabled svg { color: var(--faint) !important; }
 
-/* ── Component iframe (the graph) ── */
+/* ── Iframes (the graph) ── */
 iframe { border-radius: 13px !important; border: 1px solid var(--border) !important; background: #141414 !important; }
 
 /* ── Empty state ── */
-.empty-wrap { text-align: center; padding: 54px 20px; }
+.empty-wrap { text-align: center; padding: 40px 20px 22px 20px; }
 .empty-wrap .glyph { font-size: 28px; color: var(--faint); margin-bottom: 13px; }
 .empty-wrap h3 { font-family: 'Playfair Display', Georgia, serif !important; font-size: 24px !important; font-weight: 600 !important; color: var(--cream) !important; margin-bottom: 8px !important; }
-.empty-wrap p { font-size: 13.5px !important; color: var(--muted) !important; max-width: 360px; margin: 0 auto; line-height: 1.55; }
+.empty-wrap p { font-size: 13.5px !important; color: var(--muted) !important; max-width: 380px; margin: 0 auto; line-height: 1.55; }
 
 /* ── Graph placeholder ── */
-.graph-empty { border: 1px solid var(--border); border-radius: 13px; background: #141414; height: 560px; display: flex; align-items: center; justify-content: center; }
+.graph-empty { border: 1px solid var(--border); border-radius: 13px; background: #141414; height: 500px; display: flex; align-items: center; justify-content: center; }
 
 /* ── Code blocks ── */
 .stCode, code { background: var(--panel-2) !important; border: 1px solid var(--border-soft) !important; color: var(--cream-dim) !important; }
@@ -179,107 +244,102 @@ hr { border-top: 1px solid var(--border) !important; margin: 15px 0 !important; 
 """, unsafe_allow_html=True)
 
 
-# ─── Shared pipeline ───
-@st.cache_resource
-def get_pipeline():
-    return DMGPipeline()
+# ═══════════════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════════════
+@st.cache_data(ttl=30, show_spinner=False)
+def list_models():
+    """Chat models installed in Ollama (embedding models left out); [] if Ollama is down."""
+    return _list_models()
 
-pipeline = get_pipeline()
+
+def render_graph(store, pos_key, changes=None, height=500, show_retired=True, until=None):
+    """Draw the memory graph; node positions persist in session_state[pos_key]."""
+    positions = stable_layout(store.graph, st.session_state.get(pos_key))
+    st.session_state[pos_key] = positions
+    page = build_graph_html(store.graph, positions, height, changes, show_retired, until)
+    st.iframe(page, alt="Memory graph")  # height follows the content (legend + canvas)
 
 
-# ─── Obsidian-style graph renderer ───
-def build_graph_html(graph, height="560px"):
-    """Return an Obsidian-style interactive graph as an HTML string."""
-    net = Network(height=height, width="100%", bgcolor="#141414",
-                  font_color="#cfc8b8", directed=True)
-    net.set_options("""
-    {
-      "nodes": {
-        "shape": "dot",
-        "scaling": { "min": 6, "max": 34, "label": { "enabled": false } },
-        "font": { "color": "#cfc8b8", "size": 12, "face": "Inter, sans-serif", "vadjust": 2 },
-        "borderWidth": 0,
-        "shadow": { "enabled": true, "color": "rgba(0,0,0,0.5)", "size": 8, "x": 0, "y": 0 }
-      },
-      "edges": {
-        "color": { "color": "rgba(220,210,190,0.13)", "highlight": "rgba(167,139,250,0.75)", "hover": "rgba(167,139,250,0.55)" },
-        "width": 0.7, "selectionWidth": 1.5, "smooth": false,
-        "arrows": { "to": { "enabled": false } }
-      },
-      "physics": {
-        "solver": "forceAtlas2Based",
-        "forceAtlas2Based": { "gravitationalConstant": -55, "centralGravity": 0.012, "springLength": 130, "springConstant": 0.07, "damping": 0.45, "avoidOverlap": 0.6 },
-        "stabilization": { "iterations": 90 }
-      },
-      "interaction": { "hover": true, "tooltipDelay": 120, "hideEdgesOnDrag": false }
-    }
-    """)
+def render_details(res, original=None):
+    """Pipeline internals for one DMG answer: rewrite, actions, facts, timings, tokens."""
+    rewritten = res.get("rewritten_query")
+    if rewritten and rewritten != original:
+        st.markdown(f"**Query rewrite:** {rewritten}")
+    if res.get("actions"):
+        st.markdown("**Memory actions:**\n" + "\n".join(
+            f"- **{a.get('op')}** — {a.get('subject')} {a.get('predicate')} {a.get('object')}"
+            for a in res["actions"]))
+    if res.get("retrieved_facts"):
+        st.markdown("**Facts used for the answer:**\n" + "\n".join(
+            f"- {fact.get('text')}" for fact in res["retrieved_facts"]))
+    timings = {k: v for k, v in (res.get("timings") or {}).items() if isinstance(v, (int, float))}
+    if timings:
+        steps = " · ".join(f"{k} {v:.2f}s" for k, v in timings.items() if k != "total")
+        total = f" — total {timings['total']:.1f}s" if "total" in timings else ""
+        st.caption(f"Timings: {steps}{total}")
+    usage = res.get("usage") or {}
+    if usage:
+        st.caption(f"Answer tokens: {usage.get('prompt_tokens', '?')} prompt · "
+                   f"{usage.get('completion_tokens', '?')} completion")
 
-    GREY = {"background": "#c6c2b6", "border": "#c6c2b6",
-            "highlight": {"background": "#ffffff", "border": "#ffffff"},
-            "hover": {"background": "#e8e4d8", "border": "#e8e4d8"}}
-    PURPLE = {"background": "#a855f7", "border": "#c084fc",
-              "highlight": {"background": "#c084fc", "border": "#d8b4fe"},
-              "hover": {"background": "#c084fc", "border": "#d8b4fe"}}
 
-    for node in graph.nodes():
-        nd = graph.nodes[node]
-        node_type = nd.get("type")
-        label = nd.get("label", node)
-        degree = graph.degree(node)
-        is_hub = (node == "user")
-        net.add_node(
-            node, label=label,
-            title=f"{label}  ·  {node_type or 'node'}  ·  {degree} link(s)",
-            value=degree + 2,
-            color=PURPLE if is_hub else GREY,
-            font={"size": 15 if is_hub else 12, "face": "Inter, sans-serif",
-                  "color": "#e9e3d6" if is_hub else "#b8b2a4", "vadjust": 2},
-        )
+def queue_prompt(state_key, text):
+    """Button callback: send an example prompt on this rerun."""
+    st.session_state[state_key] = text
 
-    for u, v, k, data in graph.edges(keys=True, data=True):
-        predicate = data.get("predicate", "").replace("_", " ")
-        ended = data.get("ended_at")
-        if ended:
-            net.add_edge(u, v, title=f"{predicate} (retired)",
-                         color="rgba(120,115,105,0.18)", dashes=True, width=0.6)
-        else:
-            net.add_edge(u, v, title=predicate, width=0.7)
 
-    tmp_file = os.path.join(tempfile.gettempdir(), f"dmg_graph_{id(graph)}.html")
-    net.save_graph(tmp_file)
-    with open(tmp_file, "r", encoding="utf-8") as f:
-        return f.read()
+def example_buttons(prefix, examples, state_key):
+    """Clickable example prompts in a two-column grid."""
+    cols = st.columns(2)
+    for i, text in enumerate(examples):
+        cols[i % 2].button(text, key=f"ex_{prefix}_{i}", width="stretch", wrap=True,
+                           on_click=queue_prompt, args=(state_key, text))
+
+
+# ─── Per-session chat pipeline (loads the persisted long-term memory) ───
+state = st.session_state
+if "pipeline" not in state:
+    state.pipeline, _ = make_pipeline(GRAPH_PATH)
+    state.loaded_facts = memory_counts(state.pipeline.store)[1]
+    state.messages = []
+    state.chat_changes = None
+pipeline = state.pipeline
+
+
+def reset_chat_memory():
+    """Sidebar button: wipe the long-term memory graph and the conversation."""
+    state.pipeline.reset()
+    state.messages, state.chat_changes, state.loaded_facts = [], None, 0
+    state.pop("chat_pos", None)
 
 
 # ─── Header bar ───
-st.markdown("""
+ollama_up = bool(list_models())
+st.markdown(f"""
 <div class="app-header">
     <span class="brand">Dynamic Memory Graph</span>
     <span class="divider"></span>
     <span class="subtitle">Conversational memory for small language models</span>
-    <span class="status"><span class="dot"></span> Ollama · {model}</span>
+    <span class="status"><span class="dot{'' if ollama_up else ' off'}"></span>
+    {'Ollama · ' + html.escape(getattr(pipeline, 'model', MODEL_NAME)) if ollama_up else 'Ollama offline'}</span>
 </div>
-""".format(model=MODEL_NAME), unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 
 # ─── Sidebar ───
 with st.sidebar:
-    st.markdown('<div class="sec-label">Memory</div>', unsafe_allow_html=True)
-    stats = pipeline.store.stats()
-    col_n, col_e = st.columns(2)
-    with col_n:
-        st.metric("Entities", stats["nodes"])
-    with col_e:
-        st.metric("Relations", stats["edges"])
+    # Compare mode has its own DMG memory (shown on that page); make clear this is the Chat tab's.
+    memory_label = "Chat tab memory" if state.get("mode") == "Compare" else "Long-term memory"
+    st.markdown(f'<div class="sec-label">{memory_label}</div>', unsafe_allow_html=True)
+    entities, active, retired = memory_counts(pipeline.store)
+    st.markdown(f"""<div class="stat-row">
+        <div><b>{entities}</b><span>Entities</span></div>
+        <div><b>{active}</b><span>Active facts</span></div>
+        <div><b>{retired}</b><span>Retired</span></div></div>""", unsafe_allow_html=True)
 
     with st.expander("View stored facts"):
-        facts = pipeline.all_facts()
-        if facts:
-            for fact in facts:
-                st.write(f"- {fact['text']}")
-        else:
-            st.caption("No facts stored yet.")
+        st.markdown(facts_markdown(pipeline.store))
 
     st.divider()
 
@@ -293,35 +353,8 @@ with st.sidebar:
 """)
 
     st.divider()
-
-    if st.button("Reset memory", key="sidebar_reset", use_container_width=True):
-        pipeline.reset()
-        st.session_state.messages = []
-        st.session_state.compare_messages = []
-        if "compare_pipeline" in st.session_state:
-            st.session_state.compare_pipeline.reset()
-        st.rerun()
-
-
-# ─── Baseline helper ───
-BASELINE_SYSTEM_PROMPT = """You are a helpful assistant. Answer questions based on what the user has told you.
-If you don't remember or don't know, say so honestly."""
-
-
-def baseline_respond(message, history):
-    messages = [{"role": "system", "content": BASELINE_SYSTEM_PROMPT}]
-    recent = (history or [])[-HISTORY_TURNS * 2:]
-    messages.extend(recent)
-    messages.append({"role": "user", "content": message})
-    try:
-        response = ollama.chat(
-            model=MODEL_NAME,
-            messages=messages,
-            options={"temperature": ANSWER_TEMPERATURE, "num_ctx": CONTEXT_WINDOW},
-        )
-        return response["message"]["content"].strip()
-    except Exception as error:
-        return f"[Error: {error}]"
+    st.button("Reset memory", key="sidebar_reset", width="stretch", on_click=reset_chat_memory,
+              help="Deletes everything in data/graph.json and clears this chat.")
 
 
 # ─── Mode selector ───
@@ -333,23 +366,19 @@ mode = st.radio(
     key="mode",
 )
 
-st.write("")
-
 
 # ═══════════════════════════════════════════════════════════
 # MODE: CHAT — split screen (conversation + live graph)
 # ═══════════════════════════════════════════════════════════
 if mode == "Chat":
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
+    prompt = st.chat_input("Message...", key="chat_input") or state.pop("chat_queued", None)
     col_chat, col_graph = st.columns([5, 4], gap="large")
 
     # ── Left: conversation ──
     with col_chat:
         st.markdown('<div class="panel-label">Conversation</div>', unsafe_allow_html=True)
 
-        if not st.session_state.messages:
+        if not state.messages and not prompt:
             st.markdown("""
             <div class="empty-wrap">
                 <div class="glyph">&#9671;</div>
@@ -358,35 +387,37 @@ if mode == "Chat":
                 right grow as the memory captures each new fact.</p>
             </div>
             """, unsafe_allow_html=True)
+            if state.loaded_facts:
+                st.markdown(f'<div style="text-align:center"><span class="note">Loaded {state.loaded_facts} '
+                            f'fact{"s" if state.loaded_facts != 1 else ""} from previous sessions</span></div>',
+                            unsafe_allow_html=True)
+            example_buttons("chat", EXAMPLES_CHAT, "chat_queued")
 
-        for msg in st.session_state.messages:
+        for msg in state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
                 if msg.get("details"):
-                    details = msg["details"]
-                    has_any = (
-                        (details.get("rewritten") and details["rewritten"] != details.get("original"))
-                        or details.get("actions") or details.get("facts")
-                    )
-                    if has_any:
-                        with st.expander("Pipeline details"):
-                            if details.get("rewritten") and details["rewritten"] != details.get("original"):
-                                st.markdown(f"**Query rewrite:** {details['rewritten']}")
-                            if details.get("actions"):
-                                st.markdown("**Memory actions:**")
-                                for a in details["actions"]:
-                                    st.write(f"- **{a['op']}** — {a['subject']} {a['predicate']} {a['object']}")
-                            if details.get("facts"):
-                                st.markdown("**Retrieved facts:**")
-                                for f in details["facts"]:
-                                    st.write(f"- {f['text']}")
+                    with st.expander("Pipeline details"):
+                        render_details(msg["details"], msg["details"].get("user_message"))
+
+        if prompt:
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant"), st.spinner("Thinking..."):
+                before = graph_snapshot(pipeline.store.graph)
+                result = dmg_respond(pipeline, prompt)
+            state.chat_changes = diff_changes(before, pipeline.store.graph, result)
+            state.messages += [{"role": "user", "content": prompt},
+                               {"role": "assistant", "content": result["answer"], "details": result}]
+            st.rerun()
 
     # ── Right: live graph ──
     with col_graph:
         graph = pipeline.store.graph
-        st.markdown('<div class="panel-label"><span class="live"></span> Memory graph · live</div>', unsafe_allow_html=True)
+        st.markdown('<div class="panel-label"><span class="live"></span> Memory graph · live</div>',
+                    unsafe_allow_html=True)
 
-        if graph.number_of_nodes() == 0:
+        if graph.number_of_edges() == 0:
             st.markdown("""
             <div class="graph-empty">
                 <div style="text-align:center; color:#605c54;">
@@ -396,114 +427,190 @@ if mode == "Chat":
             </div>
             """, unsafe_allow_html=True)
         else:
-            # Only rebuild the graph HTML when the graph actually changed
-            sig = (graph.number_of_nodes(), graph.number_of_edges())
-            if st.session_state.get("_graph_sig") != sig:
-                st.session_state["_graph_html"] = build_graph_html(graph, height="560px")
-                st.session_state["_graph_sig"] = sig
-            components.html(st.session_state["_graph_html"], height=574, scrolling=False)
-            active_count = sum(1 for _, _, d in graph.edges(data=True) if not d.get("ended_at"))
-            st.caption(f"{graph.number_of_nodes()} entities · {active_count} active facts · hover a node for details")
-
-            with st.expander("Stored facts"):
-                active_facts = pipeline.store.get_all_facts(active_only=True)
-                if active_facts:
-                    for fact in active_facts:
-                        st.write(f"- {fact['text']}")
-                else:
-                    st.caption("No facts yet.")
-
-    # ── Input (full width) ──
-    if user_input := st.chat_input("Message...", key="chat_input"):
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.spinner("Thinking..."):
-            result = pipeline.chat(user_input)
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": result["answer"],
-            "details": {
-                "original": user_input,
-                "rewritten": result["rewritten_query"],
-                "actions": result["actions"],
-                "facts": result["retrieved_facts"],
-            },
-        })
-        st.rerun()
+            steps = timeline_steps(graph)
+            c_toggle, c_slider = st.columns([2, 3], vertical_alignment="bottom")
+            show_retired = c_toggle.toggle("Retired facts", value=True, key="show_retired",
+                                           help="Show facts that were updated or deleted as dashed lines")
+            step = len(steps)
+            if len(steps) > 1:  # no key: the slider jumps back to "now" when memory grows
+                step = c_slider.slider("Replay memory", 1, len(steps), len(steps), format="step %d",
+                                       help="Drag back to replay how memory grew, one change at a time")
+            if step < len(steps):
+                until = steps[step - 1]
+                changes = changes_at(graph, until)
+                caption = f"Replaying step {step} of {len(steps)} · {until.replace('T', ' ')}"
+            else:
+                until, changes = None, state.chat_changes
+                entities, active, retired = memory_counts(pipeline.store)
+                caption = (change_caption(changes) if changes
+                           else f"{entities} entities · {active} active facts · {retired} retired")
+            render_graph(pipeline.store, "chat_pos", changes, 500, show_retired, until)
+            st.caption(f"{caption}  ·  hover for details, scroll to zoom")
 
 
 # ═══════════════════════════════════════════════════════════
-# MODE: COMPARE
+# MODE: COMPARE — two baselines vs DMG on the same messages
 # ═══════════════════════════════════════════════════════════
-elif mode == "Compare":
-    if "compare_messages" not in st.session_state:
-        st.session_state.compare_messages = []
-    if "baseline_history" not in st.session_state:
-        st.session_state.baseline_history = []
-    if "compare_pipeline" not in st.session_state:
-        st.session_state.compare_pipeline = DMGPipeline(
-            os.path.join(tempfile.gettempdir(), "dmg_compare_graph.json")
-        )
-        st.session_state.compare_pipeline.reset()
+def compare_pipeline(model):
+    """The Compare tab's own DMG pipeline (temporary graph per session), rebuilt on model change."""
+    if "cmp_graph_path" not in state:
+        state.cmp_graph_path = os.path.join(tempfile.gettempdir(), f"dmg_compare_{uuid.uuid4().hex[:8]}.json")
+    if state.get("cmp_model_wanted") != model:
+        # The graph file survives the swap, so memory is kept when the model changes.
+        state.cmp_pipeline, state.cmp_model_used = make_pipeline(state.cmp_graph_path, model)
+        state.cmp_model_wanted = model
+    return state.cmp_pipeline
 
-    col_l, col_r = st.columns(2)
-    with col_l:
-        st.markdown("**Baseline — no memory**")
-    with col_r:
-        st.markdown("**DMG — with memory graph**")
+
+def reset_compare():
+    """Clear the comparison: transcript, baseline histories, DMG memory, demo results."""
+    state.cmp_rows, state.cmp_hist = [], {"recent": [], "full": []}
+    state.cmp_graph_checks, state.demo_running = None, False
+    state.pop("cmp_pos", None)
+    if "cmp_pipeline" in state:
+        state.cmp_pipeline.reset()
+
+
+def start_demo():
+    """Button callback: fresh comparison, then the script plays on this rerun."""
+    reset_compare()
+    state.demo_running = True
+
+
+def stop_demo():
+    """Button callback: stop after the current turn (results so far are kept)."""
+    state.demo_running = False
+
+
+def run_compare_turn(message, models, parallel=True, turn=None):
+    """Send one message to all three columns (LLM work in threads) and store the row."""
+    row = compare_turn(state.cmp_pipeline, state.cmp_hist, message, models, parallel, turn)
+    state.cmp_rows.append(row)
+    return row
+
+
+def render_compare_row(index, row):
+    """One user message and the three answers as neutral cards."""
+    st.markdown(f'<div class="you-line"><b>You</b>{html.escape(row["user"])}</div>', unsafe_allow_html=True)
+    for col, (cid, title) in zip(st.columns(3), COLUMNS.items()):
+        res = row["cols"][cid]
+        score = (row.get("scores") or {}).get(cid)
+        badge = "" if score is None else ('<span class="pass">✅ pass</span>' if score[0]
+                                          else '<span class="fail">❌ fail</span>')
+        with col, st.container(border=True, key=f"card_{index}_{cid}"):
+            st.markdown(f'<div class="card-head"><span>{title}</span>{badge}</div>', unsafe_allow_html=True)
+            st.markdown(res.get("answer", ""))
+            if score and not score[0]:
+                st.caption("; ".join(str(r) for r in score[1]))
+            st.caption(evidence_line(res))
+            if cid == "dmg" and (res.get("retrieved_facts") or res.get("actions")):
+                with st.expander(f"{len(res.get('retrieved_facts') or [])} facts used · "
+                                 f"{len(res.get('actions') or [])} memory actions"):
+                    render_details(res, row["user"])
+
+
+if mode == "Compare":
+    for key, default in [("cmp_rows", []), ("cmp_hist", {"recent": [], "full": []}),
+                         ("cmp_graph_checks", None), ("demo_running", False)]:
+        state.setdefault(key, default)
+    prompt = st.chat_input("Type a message to compare...", key="compare_input") or state.pop("cmp_queued", None)
+
+    # ── Controls ──
+    options = list_models() or [MODEL_NAME]
+    c_model, c_per, c_par, c_graph = st.columns([3, 2, 2, 2], vertical_alignment="bottom")
+    base_model = c_model.selectbox("Model", options, key="cmp_model",
+                                   index=options.index(MODEL_NAME) if MODEL_NAME in options else 0)
+    per_column = c_per.toggle("Model per column", key="cmp_per_col")
+    parallel = c_par.toggle("Run in parallel", value=True, key="cmp_parallel",
+                            help="Columns run at the same time. If Ollama serves one request at a time, "
+                                 "latency then includes waiting for the other columns.")
+    show_graph = c_graph.toggle("DMG graph", value=True, key="cmp_show_graph")
+
+    c_run, c_reset, _ = st.columns([2, 2, 5])
+    # One button (same key) that flips between run and stop, so no stale copy lingers mid-run.
+    c_run.button("Stop demo" if state.demo_running else "Run demo script", key="demo_run", type="primary",
+                 width="stretch", on_click=stop_demo if state.demo_running else start_demo,
+                 help="Plays evaluation/demo_script.json (15 turns) through all three columns "
+                      "and scores each answer. Takes a few minutes.")
+    c_reset.button("Reset comparison", key="reset_compare", width="stretch", on_click=reset_compare)
+    progress_slot = st.empty()
+
+    # ── Column headers: title, model, running score ──
+    scores = column_scores(state.cmp_rows)
+    models = {}
+    for col, (cid, title) in zip(st.columns(3), COLUMNS.items()):
+        with col:
+            st.markdown(f"**{title}**")
+            if per_column:
+                models[cid] = st.selectbox(f"Model for {title}", options, key=f"cmp_model_{cid}",
+                                           index=options.index(base_model), label_visibility="collapsed")
+            else:
+                models[cid] = base_model
+            passed, scored = scores[cid]
+            if scored:
+                st.metric("Demo score", f"{passed}/{scored}")
+    cmp_pipeline = compare_pipeline(models["dmg"])
+    for cid, col in zip(COLUMNS, st.columns(3)):
+        used = state.cmp_model_used if cid == "dmg" else models[cid]
+        warn = " (pipeline ignores the model choice)" if cid == "dmg" and used != models["dmg"] else ""
+        col.caption(f"{used}{warn}")
+
+    if show_graph and cmp_pipeline.store.graph.number_of_edges():
+        last = state.cmp_rows[-1]["cols"]["dmg"].get("changes") if state.cmp_rows else None
+        g_col, facts_col = st.columns([3, 2], gap="medium")
+        with g_col:
+            render_graph(cmp_pipeline.store, "cmp_pos", last, height=400)
+        with facts_col:
+            entities, active, retired = memory_counts(cmp_pipeline.store)
+            st.markdown('<div class="panel-label"><span class="live"></span> What DMG remembers</div>',
+                        unsafe_allow_html=True)
+            st.caption(f"{entities} entities · {active} active facts · {retired} retired"
+                       + (f"  ·  last turn: {change_caption(last)}" if last else ""))
+            with st.container(height=360, border=False):
+                st.markdown(facts_markdown(cmp_pipeline.store))
 
     st.divider()
 
-    if st.session_state.compare_messages:
-        for entry in st.session_state.compare_messages:
-            st.markdown(f"**You:** {entry['user']}")
-            cl, cr = st.columns(2)
-            with cl:
-                st.info(entry["baseline"])
-            with cr:
-                st.success(entry["dmg"])
-                if entry.get("actions"):
-                    with st.expander("Memory actions"):
-                        for a in entry["actions"]:
-                            st.write(f"- **{a['op']}** — {a['subject']} {a['predicate']} {a['object']}")
-            st.divider()
+    # ── Transcript ──
+    for i, row in enumerate(state.cmp_rows):
+        render_compare_row(i, row)
+    live_area = st.container()
 
-        if st.button("Reset comparison", key="reset_compare"):
-            st.session_state.compare_messages = []
-            st.session_state.baseline_history = []
-            st.session_state.compare_pipeline.reset()
-            st.rerun()
-    else:
+    if prompt:  # a typed message stops a running demo
+        state.demo_running = False
+        live_area.markdown(f'<div class="you-line"><b>You</b>{html.escape(prompt)}</div>', unsafe_allow_html=True)
+        with live_area, st.spinner("Running all three columns..."):
+            run_compare_turn(prompt, models, parallel)
+        st.rerun()
+
+    if state.demo_running:
+        script = load_script()
+        turns = script["turns"]
+        for i in range(len(state.cmp_rows), len(turns)):
+            running = column_scores(state.cmp_rows)
+            score_text = " · ".join(f"{SHORT_NAMES[c]} {p}/{n}" for c, (p, n) in running.items() if n)
+            progress_slot.progress(i / len(turns), text=f"Demo turn {i + 1}/{len(turns)}: “{turns[i]['message']}”"
+                                   + (f"  —  score so far: {score_text}" if score_text else ""))
+            row = run_compare_turn(turns[i]["message"], models, parallel, turn=turns[i])
+            with live_area:
+                render_compare_row(i, row)
+        state.cmp_graph_checks = check_graph(state.cmp_pipeline.store, script)
+        state.demo_running = False
+        st.rerun()
+
+    if state.cmp_graph_checks:
+        checks = state.cmp_graph_checks
+        passed = sum(1 for _, ok in checks if ok)
+        with st.expander(f"DMG graph checks after the demo · {passed}/{len(checks)} passed", expanded=True):
+            st.markdown("  \n".join(f"{'✅' if ok else '❌'} `{check}`" for check, ok in checks))
+
+    if not state.cmp_rows and not state.demo_running:
         st.markdown("""
         <div class="empty-wrap">
             <div class="glyph">&#9672;</div>
             <h3>Start a comparison</h3>
-            <p>Send a message to test the model with and without memory.
-            Try these in order to see the difference.</p>
+            <p>Each message goes to two memory-less baselines and to DMG.
+            Try these in order, or press <b>Run demo script</b> for the scored 15-turn script.</p>
         </div>
         """, unsafe_allow_html=True)
-        for s in [
-            "I'm diabetic and I take Metformin every morning.",
-            "I live in Bangalore and love filter coffee.",
-            "My sister Priya lives in Pune.",
-            "What medicine do I take?",
-            "Where does my sister live?",
-        ]:
-            st.code(s, language=None)
-
-    compare_input = st.chat_input("Type a message to compare...", key="compare_input")
-    if compare_input:
-        with st.spinner("Running both models..."):
-            baseline_answer = baseline_respond(compare_input, st.session_state.baseline_history)
-            st.session_state.baseline_history.append({"role": "user", "content": compare_input})
-            st.session_state.baseline_history.append({"role": "assistant", "content": baseline_answer})
-            st.session_state.baseline_history = st.session_state.baseline_history[-HISTORY_TURNS * 2:]
-
-            dmg_result = st.session_state.compare_pipeline.chat(compare_input)
-            st.session_state.compare_messages.append({
-                "user": compare_input,
-                "baseline": baseline_answer,
-                "dmg": dmg_result["answer"],
-                "actions": dmg_result["actions"],
-                "facts": dmg_result["retrieved_facts"],
-            })
-        st.rerun()
+        example_buttons("cmp", EXAMPLES_COMPARE, "cmp_queued")
