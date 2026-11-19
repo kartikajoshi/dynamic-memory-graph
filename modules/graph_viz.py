@@ -35,7 +35,7 @@ from collections import Counter
 import networkx as nx
 from pyvis.network import Network
 
-from config import GRAPH_PATH, USER_NODE
+from config import USER_NODE
 
 USER_ID = USER_NODE.lower()  # node id of the hub ("user")
 

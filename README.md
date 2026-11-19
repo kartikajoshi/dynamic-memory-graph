@@ -267,11 +267,24 @@ The evaluation framework (`evaluation/eval.py`) measures retrieval quality using
 | Graph only | Multi-hop expansion + recency rerank |
 | Full RRF | All three fused with Reciprocal Rank Fusion |
 
+**Results** (`python -m evaluation.eval --skip-llm`, 10 queries across 5 conversations):
+
+| Retriever | R@1 | R@3 | R@5 |
+|---|---|---|---|
+| BM25 only | 0.55 | 0.70 | 0.70 |
+| Dense only | 0.65 | 1.00 | 1.00 |
+| Graph only | 0.50 | 0.75 | 1.00 |
+| **Full RRF** | **0.80** | **1.00** | **1.00** |
+
+Fusing the three retrievers gives the best top-1 recall: the right fact comes first 80% of the time.
+
 ---
 
 ## Screenshots
 
-> Screenshots will be added after end-to-end testing.
+Web UI after the 15-turn demo: the chat on the left, the memory graph on the right. Dashed edges are retired facts (the move from Bangalore, stopping Metformin).
+
+![DMG web UI](screenshots/web_ui.jpg)
 
 ---
 

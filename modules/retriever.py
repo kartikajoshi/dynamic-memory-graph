@@ -26,7 +26,6 @@ Quick test (no Ollama needed):
 import re
 import logging
 
-import numpy as np
 import faiss
 from rank_bm25 import BM25Plus
 from sentence_transformers import SentenceTransformer

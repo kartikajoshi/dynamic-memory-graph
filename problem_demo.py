@@ -12,8 +12,6 @@ Run from the project root (Ollama must be running with llama3.2:3b pulled):
     python problem_demo.py
 """
 
-from datetime import datetime
-
 import ollama
 
 from config import ANSWER_TEMPERATURE, CONTEXT_WINDOW, HISTORY_TURNS, MODEL_NAME

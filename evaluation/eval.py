@@ -24,20 +24,11 @@ import json
 import os
 import sys
 import tempfile
-from datetime import datetime
 
 # Add project root to path so imports work when run as a module.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import (
-    BM25_TOP_K,
-    DENSE_TOP_K,
-    GRAPH_TOP_K,
-    RECALL_K_VALUES,
-    RRF_K,
-    TEST_CONVERSATIONS_PATH,
-    TOP_K,
-)
+from config import RECALL_K_VALUES, TEST_CONVERSATIONS_PATH, TOP_K
 from modules.extractor import extract
 from modules.graph_store import GraphStore
 from modules.memory_manager import update_graph
@@ -46,7 +37,6 @@ from modules.retriever import (
     dense_search,
     graph_search,
     retrieve,
-    rrf_fuse,
 )
 
 

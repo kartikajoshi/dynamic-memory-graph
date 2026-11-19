@@ -28,7 +28,6 @@ Quick test:
 
 import json
 import os
-from datetime import datetime
 
 import networkx as nx
 from networkx.readwrite import json_graph
